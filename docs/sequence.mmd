@@ -1,0 +1,32 @@
+%% leaf-gw: one engaged longitudinal control cycle, plus the safety branches.
+%% Rendered inline by GitHub from the fenced copy in README.md.
+sequenceDiagram
+  autonumber
+  participant OP as openpilot<br/>controlsd + CarController
+  participant PA as panda<br/>safety
+  participant GW as leaf-gw<br/>gw_engine
+  participant AD as ADAS unit
+  participant AB as ABS / VCM
+
+  Note over OP,AB: Lateral is a separate path: OP → panda → V-CAN → EPS,<br/>it does NOT pass through the gateway. Below is longitudinal only.
+  Note over AD,AB: The stock ADAS unit is never<br/>silenced — it keeps emitting its<br/>own 0x2B0 / 0x1C3 the whole time.
+
+  loop every ~10 ms
+    AD->>GW: 0x2B0 / 0x1C3 stock request<br/>(Chassis CAN ADAS side → CAN1)
+    OP->>PA: desired accel (m/s²)
+    alt engaged AND within bounds
+      PA->>GW: real 0x2B0 / 0x1C3<br/>(V-CAN → gateway CAN3)
+    else disengaged / out of bounds
+      PA-xGW: blocked — panda sends nothing
+    end
+
+    alt openpilot fresh (< 50 ms) AND engaged
+      Note over GW,AB: arbitration — forward whichever<br/>side commands MORE braking (op vs stock)
+      GW->>AB: substituted 0x2B0 / 0x1C3<br/>(chassis side → ABS)
+    else stale / disengaged
+      GW->>AB: stock frame forwarded unchanged
+    end
+  end
+
+  Note over AD,AB: Stock AEB = a hard 0x1C3 spike from the<br/>ADAS unit. Arbitration forwards it (stock ><br/>op), so emergency braking always wins.
+  Note over GW,AB: MCU reset / power-loss → external NC relay<br/>reconnects ADAS ↔ chassis directly = stock<br/>path (no software involved).

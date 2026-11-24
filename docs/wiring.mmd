@@ -1,0 +1,54 @@
+%% leaf-gw PLANNED wiring. Two things meet at the Leaf's ADAS module: the STOCK
+%% comma install (a plug-in harness, unchanged from a lateral-only setup) and OUR
+%% interceptor (physically spliced into the Chassis CAN pair). Pins from the 2018 ESM;
+%% relay topology functional; which V-CAN segment is a bench check. Bench only.
+flowchart TB
+  subgraph STOCK["stock comma install — plug-in, NO splicing (same as lateral)"]
+    CF["comma four"]
+    HB["Nissan A harness box<br/>1 relay, cuts the steering bus"]
+    CF ---|OBD-C| HB
+  end
+
+  VCAN{{"V-CAN (M2 pins 1/2)<br/>steering + openpilot's 0x2B0 / 0x1C3"}}
+  ICA{{"Chassis CAN ADAS side (M2 pins 8/9)"}}
+  ICB{{"Chassis CAN chassis side"}}
+
+  subgraph CAR["Nissan Leaf ZE1 (stock) — at/around the ADAS module"]
+    ADAS["ADAS unit<br/>stays LIVE (AEB intact)"]
+    EPS["EPS steering"]
+    ABS["ABS actuator + VCM"]
+    PWRCAR["M2 pin 12 IGN +12V · pin 5 GND"]
+  end
+
+  subgraph GW["leaf-gw interceptor — OUR ADD-ON, spliced into Chassis CAN"]
+    CAN3["CAN3 — V-CAN tap (listen)"]
+    CORE["gw_engine<br/>arbitrate · re-stamp · fail-open"]
+    CAN1["CAN1 — ADAS side"]
+    CAN2["CAN2 — chassis side"]
+    RELAY["external NC fail-open relay"]
+    PWRGW["12V in · GND"]
+  end
+
+  %% stock comma: plug in at the ADAS module, drive V-CAN
+  HB ==>|plug-in at ADAS module| VCAN
+  VCAN --> EPS
+  ADAS --- VCAN
+
+  %% our interceptor: tap V-CAN to hear 0x2B0/0x1C3, and CUT the Chassis CAN pair
+  VCAN -. tap .-> CAN3 --> CORE
+  ADAS --- ICA
+  ICA ==>|CUT 8/9| CAN1 --> CORE --> CAN2 ==>|CUT| ICB
+  ICB --> ABS
+  ICA -. NC bypass on reset .-> RELAY -.-> ICB
+  PWRCAR --> PWRGW
+
+  classDef stock fill:#e6f2e6,stroke:#44aa44
+  classDef addon fill:#e6e6fb,stroke:#5555cc
+  classDef bus fill:#fff6d5,stroke:#b59a00
+  classDef ic fill:#fde8e8,stroke:#cc6666
+  classDef relay fill:#fdd6d6,stroke:#cc0000
+  class CF,HB stock
+  class CAN3,CORE,CAN1,CAN2,PWRGW addon
+  class VCAN bus
+  class ICA,ICB ic
+  class RELAY relay

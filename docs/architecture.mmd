@@ -1,0 +1,53 @@
+%% leaf-gw topology. Every link is CAN; arrows show the direction that matters.
+%% Thick = the openpilot command; dotted = the hardware fail-open bypass.
+flowchart TB
+  subgraph COMMA["comma / openpilot"]
+    direction TB
+    OP["controlsd + CarController<br/>leaf_gw_long.py"]
+    PANDA["panda · safety gate"]
+    OP --> PANDA
+  end
+
+  subgraph INT["leaf-gw interceptor — Ocelot, 3x CAN"]
+    direction TB
+    CORE["gw_engine<br/>decode · arbitrate · encode · fail-open"]
+    RELAY["NC fail-open relay"]
+  end
+
+  subgraph CAR["Nissan Leaf ZE1 (stock)"]
+    direction TB
+    ADAS["ADAS unit<br/>ProPILOT / ICC / AEB"]
+    RADAR["radar + camera"]
+    EPS["EPS steering"]
+    VCM["VCM"]
+    ABS["ABS actuator"]
+    RADAR --- ADAS
+  end
+
+  VCAN{{"V-CAN<br/>(steering + openpilot 0x2B0/0x1C3)"}}
+  ITS{{"ITS-CAN"}}
+  ICA{{"Chassis CAN · ADAS side"}}
+  ICB{{"Chassis CAN · chassis side"}}
+
+  %% V-CAN is shared: panda already sits here. Steering goes to EPS; openpilot's
+  %% real 0x2B0/0x1C3 ride the same bus and the interceptor reads them on CAN3 (a tap).
+  PANDA -->|steering| VCAN --> EPS
+  PANDA ==>|0x2B0 / 0x1C3 · bus 2| VCAN
+  VCAN ==>|CAN3 tap| CORE
+  ADAS --- VCAN
+  %% ADAS private sensor bus
+  ADAS --- ITS
+  RADAR -.-> ITS
+  %% stock request in -> arbitrated -> out to the brakes
+  ADAS -->|0x2B0 / 0x1C3| ICA --> CORE
+  CORE -->|0x2B0 / 0x1C3| ICB --> ABS
+  ICB --> VCM
+  %% hardware fail-open
+  ICA -. bypass on reset .-> RELAY -.-> ICB
+
+  classDef bus fill:#fff6d5,stroke:#b59a00
+  classDef ic fill:#fde8e8,stroke:#cc6666
+  classDef relay fill:#fdd6d6,stroke:#cc0000
+  class VCAN,ITS bus
+  class ICA,ICB ic
+  class RELAY relay
