@@ -1,0 +1,181 @@
+diff --git a/opendbc/car/nissan/carcontroller.py b/opendbc/car/nissan/carcontroller.py
+index 42f693a2..e2443699 100644
+--- a/opendbc/car/nissan/carcontroller.py
++++ b/opendbc/car/nissan/carcontroller.py
+@@ -8,6 +8,7 @@ from opendbc.car.nissan.values import CAR, CarControllerParams
+ from opendbc.car.common.filter_simple import FirstOrderFilter
+ 
+ VisualAlert = structs.CarControl.HUDControl.VisualAlert
++LongCtrlState = structs.CarControl.Actuators.LongControlState
+ 
+ 
+ class CarController(CarControllerBase):
+@@ -28,6 +29,34 @@ class CarController(CarControllerBase):
+ 
+     can_sends = []
+ 
++    ### LONGITUDINAL ###
++    # openpilot emits the real Leaf ADAS frames (0x2B0 propulsion/regen, 0x1C3
++    # friction brake) on the leaf-gw control bus. It does NOT silence the stock
++    # ADAS ECU, so stock AEB stays live; the inline gateway re-emits these onto
++    # Chassis CAN and yields to a stronger stock request (magnitude arbitration).
++    if self.CP.openpilotLongitudinalControl and self.car_fingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC):
++      accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
++      stopping = actuators.longControlState == LongCtrlState.stopping
++      brake_mode = CC.longActive and (accel < CarControllerParams.PROPILOT_ACCEL_MIN or stopping)
++
++      if CC.longActive:
++        if brake_mode:
++          raw_accel = CarControllerParams.PROPILOT_BRAKE_RAW
++        else:
++          propulsion = float(np.clip(accel, CarControllerParams.PROPILOT_ACCEL_MIN, CarControllerParams.PROPILOT_ACCEL_MAX))
++          raw_accel = round(propulsion * CarControllerParams.PROPILOT_ACCEL_SCALE + CarControllerParams.PROPILOT_ACCEL_OFFSET)
++      else:
++        raw_accel = CarControllerParams.PROPILOT_INACTIVE_RAW
++
++      brake_pressure = round(max(0.0, -accel - 1.0) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
++      if stopping and CS.out.vEgo < self.CP.vEgoStopping:
++        brake_pressure = CarControllerParams.BRAKE_MAX
++      brake_pressure = int(np.clip(brake_pressure, 0, CarControllerParams.BRAKE_MAX))
++
++      can_sends.append(nissancan.create_accel_command(raw_accel, self.frame, CC.longActive))
++      can_sends.append(nissancan.create_brake_command(brake_pressure, self.frame,
++                                                      CC.longActive and brake_pressure > 0, brake_mode))
++
+     ### STEER ###
+     steer_hud_alert = 1 if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) else 0
+ 
+@@ -81,6 +110,8 @@ class CarController(CarControllerBase):
+ 
+     new_actuators = actuators.as_builder()
+     new_actuators.steeringAngleDeg = self.apply_angle_last
++    if self.CP.openpilotLongitudinalControl:
++      new_actuators.accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+ 
+     self.frame += 1
+     return new_actuators, can_sends
+diff --git a/opendbc/car/nissan/interface.py b/opendbc/car/nissan/interface.py
+index 8253d484..15bf1947 100644
+--- a/opendbc/car/nissan/interface.py
++++ b/opendbc/car/nissan/interface.py
+@@ -2,9 +2,15 @@ from opendbc.car import get_safety_config, structs
+ from opendbc.car.interfaces import CarInterfaceBase
+ from opendbc.car.nissan.carcontroller import CarController
+ from opendbc.car.nissan.carstate import CarState
+-from opendbc.car.nissan.values import CAR, NissanSafetyFlags
++from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
+ 
+ class CarInterface(CarInterfaceBase):
++  @staticmethod
++  def get_pid_accel_limits(CP, current_speed, cruise_speed):
++    if CP.carFingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC) and CP.openpilotLongitudinalControl:
++      return CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX
++    return CarInterfaceBase.get_pid_accel_limits(CP, current_speed, cruise_speed)
++
+   CarState = CarState
+   CarController = CarController
+ 
+@@ -24,6 +30,19 @@ class CarInterface(CarInterfaceBase):
+     ret.steerControlType = structs.CarParams.SteerControlType.angle
+     ret.radarUnavailable = True
+ 
++    # Longitudinal via the inline leaf-gw Chassis CAN gateway (github.com/siigna/leaf-gw).
++    # openpilot emits the real 0x2B0/0x1C3 on the gateway's control bus; the
++    # gateway keeps the stock ADAS ECU live and preserves AEB by magnitude
++    # arbitration. No ECU takeover in init() -- that is the whole point.
++    ret.alphaLongitudinalAvailable = candidate in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC)
++    ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable
++    ret.pcmCruise = not ret.openpilotLongitudinalControl
++
++    if ret.openpilotLongitudinalControl:
++      ret.safetyConfigs[0].safetyParam |= NissanSafetyFlags.LONG_CONTROL.value
++      ret.autoResumeSng = True
++      ret.stopAccel = -2.0
++
+     if candidate == CAR.NISSAN_ALTIMA:
+       # Altima has EPS on C-CAN unlike the others that have it on V-CAN
+       ret.safetyConfigs[0].safetyParam |= NissanSafetyFlags.ALT_EPS_BUS.value
+diff --git a/opendbc/car/nissan/nissancan.py b/opendbc/car/nissan/nissancan.py
+index 24a49e02..cf40d784 100644
+--- a/opendbc/car/nissan/nissancan.py
++++ b/opendbc/car/nissan/nissancan.py
+@@ -1,6 +1,11 @@
++from opendbc.car import CanData
+ from opendbc.car.crc import CRC8J1850, mk_crc8_fun
+ from opendbc.car.nissan.values import CAR
+ 
++# Bus the leaf-gw gateway taps to read these frames (V-CAN; the comma already
++# drives it for steering). Which V-CAN segment / panda bus is a bench check.
++LEAF_LONG_BUS = 2
++
+ # TODO: add this checksum to the CANPacker
+ nissan_checksum = mk_crc8_fun(CRC8J1850, init_crc=0x00, xor_out=0xFF)
+ 
+@@ -152,3 +157,35 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
+     values["HANDS_ON_WHEEL_WARNING"] = 1
+ 
+   return packer.make_can_msg("PROPILOT_HUD_INFO_MSG", 0, values)
++
++
++def create_accel_command(raw_command, frame, active):
++  """Leaf ADAS propulsion/regen request (0x2B0). leaf-gw re-stamps the counter
++  and re-emits it on Chassis CAN; openpilot only owns the command value."""
++  raw_command = int(raw_command)
++  raw12, fraction = divmod(raw_command, 4)
++  inverse = (~raw12) & 0xFFF
++  dat = bytes([
++    ((inverse & 0xF) << 4) | ((inverse >> 4) & 0xF),
++    (raw12 >> 4) & 0xFF,
++    (((inverse >> 8) & 0xF) << 4) | (raw12 & 0xF),
++    0xAC,
++    0x5B if active else 0x1B,
++    0x00,
++    ((frame & 0xF) << 4) | 0xE,
++    (fraction << 2) | ((~fraction) & 0x3),
++  ])
++  return CanData(0x2B0, dat, LEAF_LONG_BUS)
++
++
++def create_brake_command(pressure, frame, active, brake_mode):
++  """Leaf ADAS friction-brake request (0x1C3), pressure in 0.5-count units."""
++  pressure = int(pressure)
++  dat = bytearray(8)
++  dat[0] = (pressure >> 4) & 0x3F
++  dat[1] = (pressure & 0xF) << 4
++  dat[4] = 0x64
++  dat[5] = (0x80 if active else 0) | (0x04 if brake_mode else 0) | (frame & 0x3)
++  dat[6] = 0xFF
++  dat[7] = (0x01 + 0xC3 + sum(dat[:7])) & 0xFF
++  return CanData(0x1C3, bytes(dat), LEAF_LONG_BUS)
+diff --git a/opendbc/car/nissan/values.py b/opendbc/car/nissan/values.py
+index 7d6e48a3..bcd4bfd3 100644
+--- a/opendbc/car/nissan/values.py
++++ b/opendbc/car/nissan/values.py
+@@ -23,12 +23,27 @@ class CarControllerParams:
+   LKAS_MAX_TORQUE = 1               # A value of 1 is easy to overpower
+   STEER_THRESHOLD = 1.0
+ 
++  # 2025 Leaf ProPILOT longitudinal limits. The propulsion/regen request (0x2B0)
++  # has 2048 counts per m/s^2 about a 6144-count zero; friction braking (0x1C3)
++  # blends in below -1 m/s^2. From the StarPilot fork (2025 SV Plus).
++  ACCEL_MIN = -3.5
++  ACCEL_MAX = 2047 / 2048
++  PROPILOT_ACCEL_MIN = -1.0
++  PROPILOT_ACCEL_MAX = ACCEL_MAX
++  PROPILOT_ACCEL_OFFSET = 6144
++  PROPILOT_ACCEL_SCALE = 2048
++  PROPILOT_INACTIVE_RAW = 5320
++  PROPILOT_BRAKE_RAW = 2518
++  BRAKE_MAX = 659
++  BRAKE_GAIN = 264.0
++
+   def __init__(self, CP):
+     pass
+ 
+ 
+ class NissanSafetyFlags(IntFlag):
+   ALT_EPS_BUS = 1
++  LONG_CONTROL = 2
+ 
+ 
+ class Footnote(Enum):
