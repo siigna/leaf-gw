@@ -1,0 +1,21 @@
+diff --git a/nissan_leaf_2018.dbc b/nissan_leaf_2018.dbc
+index 6483d9c..b7b9a72 100644
+--- a/nissan_leaf_2018.dbc
++++ b/nissan_leaf_2018.dbc
+@@ -202,6 +202,16 @@ BO_ 1549 DOORS_LIGHTS: 8 XXX
+ BO_ 1227 LKAS_SETTINGS: 8 XXX
+  SG_ LKAS_ENABLED : 51|1@0+ (1,0) [0|1] "" XXX
+ 
++BO_ 1535 LEAF_GW_HEARTBEAT: 8 XXX
++ SG_ MAGIC : 7|24@0+ (1,0) [0|16777215] "" XXX
++ SG_ VERSION : 31|8@0+ (1,0) [0|255] "" XXX
++ SG_ INLINE : 32|1@0+ (1,0) [0|1] "" XXX
++ SG_ OP_ACTIVE : 33|1@0+ (1,0) [0|1] "" XXX
++ SG_ COUNTER : 43|4@0+ (1,0) [0|15] "" XXX
++ SG_ CHECKSUM : 63|8@0+ (1,0) [0|255] "" XXX
++
++CM_ BO_ 1535 "leaf-gw gateway heartbeat (github.com/siigna/leaf-gw), 50 Hz on the gateway's V-CAN bus: 'LGW' version status counter 0 checksum, checksum = (0xFF + sum bytes 0..6) & 0xFF";
++
+ VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;
+ VAL_ 1228 PROPILOT_NA_MSGS 0 "NO_MSG" 1 "NA_FRONT_CAMERA_IMPARED" 2 "STEERING_ASSIST_ON_STANDBY" 3 "NA_PARKING_ASSIST_ENABLED" 4 "STEER_ASSIST_CURRENTLY_NA" 5 "NA_BAD_WEATHER" 6 "NA_PARK_BRAKE_ON" 7 "NA_SEATBELT_NOT_FASTENED" ;
+ VAL_ 1228 BOTTOM_MSG 0 "OK_STEER_ASSIST_SETTINGS" 1 "NO_MSG" 2 "PRESS_SET_TO_SET_SPEED" 3 "PRESS_RES_SET_TO_CHANGE_SPEED" 4 "PRESS_RES_TO_RESTART" 5 "NO_MSG" 6 "CRUISE_NOT_AVAIL" 7 "NO_MSG" ;

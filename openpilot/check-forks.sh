@@ -8,6 +8,13 @@
 # --latest tests each fork's current branch head instead of the pin (drift check).
 # Clones live in $SRC/<owner>/<repo> (default ~/src/github); missing ones are cloned.
 # No `set -e`: one failing fork must not hide the others.
+#
+# A fork whose tree doesn't fit the default (one opendbc-style repo) ships
+# openpilot/<patch-dir>/fork.sh. It is run as `fork.sh <worktree> <openpilot-dir>`
+# after the superproject worktree exists at the pinned rev, and owns everything
+# else: submodule worktrees, applying its patches, its own nix env, building,
+# running tests (printing one summary line per suite) and cleaning up what it
+# created. Exit 0 = PASS.
 
 here=$(cd "$(dirname "$0")" && pwd)
 SRC=${SRC:-$HOME/src/github}
@@ -22,6 +29,8 @@ FORKS=(
   "opendbc    commaai/opendbc       master     341fb3d9 .          ."
   "sunnypilot sunnypilot/opendbc    master     11c61f3e sunnypilot ."
   "starpilot  StarPilotHQ/StarPilot StarPilot  0b2061d  starpilot  opendbc_repo"
+  "retropilot RetroPilot/openpilot  c2         b9a942ef retropilot ."
+  "flowpilot  flowdriveai/flowpilot master     59f5cf3f flowpilot  ."
 )
 
 fail=0
@@ -38,6 +47,13 @@ for row in "${FORKS[@]}"; do
   echo "  at $(git -C "$wt" log -1 --format='%h %cs %s')"
 
   ok=1
+  if [ -x "$here/$pdir/fork.sh" ]; then
+    "$here/$pdir/fork.sh" "$wt" "$here" 2>&1 | sed 's/^/  /'
+    [ "${PIPESTATUS[0]}" = 0 ] || ok=0
+    rm -rf "$wt" && git -C "$clone" worktree prune
+    if [ $ok = 1 ]; then echo "  PASS"; else echo "  FAIL"; fail=1; fi
+    continue
+  fi
   shopt -s nullglob
   patches=("$here/$pdir"/*.patch)
   [ ${#patches[@]} -gt 0 ] || { echo "  FAIL no patches in openpilot/$pdir"; ok=0; }

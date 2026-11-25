@@ -1,0 +1,32 @@
+# Minimal host build for FlowPilot's car/safety tests (copied into the worktree root by fork.sh; not part of the tree).
+AddOption("--test", action="store_true")
+import os, subprocess, sysconfig
+py = lambda c: subprocess.check_output([os.environ["FP_PY"], "-c", c], encoding="utf8").strip()
+py_inc = py("import sysconfig;print(sysconfig.get_paths()['include'])")
+np_inc = py("import numpy;print(numpy.get_include())")
+inc = os.environ["FP_INC"].split(":")
+lib = os.environ["FP_LIB"].split(":")
+env = Environment(ENV=os.environ, CC='clang', CXX='clang++',
+  CCFLAGS=["-g", "-fPIC", "-O2", "-Wno-unused-command-line-argument", "-Wno-deprecated-declarations"],
+  CFLAGS=["-std=gnu11"], CXXFLAGS=["-std=c++17", "-include", "iterator"],
+  CPPPATH=["#", "#opendbc/can", "#cereal", "#common", "#third_party"] + inc,
+  LIBPATH=["#common", "#opendbc/can", "#cereal"] + lib, RPATH=lib + [Dir("#opendbc/can").abspath],
+  CYTHONCFILESUFFIX=".cpp", toolpath=['opendbc/site_scons/site_tools'], tools=["default", "cython"])
+env["ENV"]["PATH"] = os.path.dirname(os.environ["FP_PY"]) + ":" + os.environ["PATH"]
+envCython = env.Clone()
+envCython["CPPPATH"] += [py_inc, np_inc]
+envCython["CCFLAGS"] += ["-Wno-#warnings", "-Wno-shadow"]
+envCython["LINKFLAGS"] = ["-pthread", "-shared"]
+envCython["LIBS"] = []
+_common = env.Library('common/common_test', ['common/params.cc', 'common/util.cc'])
+common = [_common, 'lmdb']
+arch = 'x86_64'
+Export('env', 'envCython', 'arch', 'common')
+envCython.Program('common/params_pyx.so', 'common/params_pyx.pyx', LIBS=[_common, 'lmdb'])
+SConscript(['opendbc/can/SConscript'])
+SConscript(['cereal/SConscript'])
+envCython.Program('common/clock.so', 'common/clock.pyx')
+env.Library('selfdrive/boardd/can_list_to_can_capnp', ['selfdrive/boardd/can_list_to_can_capnp.cc'])
+envCython.Program('selfdrive/boardd/boardd_api_impl.so', 'selfdrive/boardd/boardd_api_impl.pyx',
+                  LIBS=['can_list_to_can_capnp', 'capnp', 'kj'], LIBPATH=env['LIBPATH'] + ['#selfdrive/boardd'])
+envCython.Program('common/kalman/simple_kalman_impl.so', 'common/kalman/simple_kalman_impl.pyx')

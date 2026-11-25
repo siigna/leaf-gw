@@ -18,7 +18,7 @@ and panda bounds them like any other car (`longitudinal_gas_checks` /
 
 ## Gateway heartbeat
 
-The gateway sends `0x5FF` on its V-CAN port at 10 Hz (`'L' 'G' 'W'`, version,
+The gateway sends `0x5FF` on its V-CAN port at 50 Hz (`'L' 'G' 'W'`, version,
 status, counter, checksum; `LEAF_GW_HEARTBEAT` in the Leaf DBC). Two independent
 gates use it:
 
@@ -77,9 +77,9 @@ passes, all five nissan interfaces (incl. the fuzzed Leaf longitudinal
 `CarController.update()`) pass, and `pytest test_nissan.py` → 103 passed / 15
 skipped.
 
-## Forks (sunnypilot, StarPilot)
+## Forks (sunnypilot, StarPilot, RetroPilot, FlowPilot)
 
-The same design, ported per fork — each fork's nissan code has diverged enough that
+The same design, ported per fork. Each fork's nissan code has diverged enough that
 the upstream patches don't apply there:
 
 | fork | base | patches |
@@ -87,6 +87,13 @@ the upstream patches don't apply there:
 | openpilot (comma) | `commaai/opendbc` master `341fb3d9` | `*.patch` here |
 | sunnypilot | `sunnypilot/opendbc` master `11c61f3e` | [`sunnypilot/`](sunnypilot/README.md) |
 | StarPilot | `StarPilotHQ/StarPilot` `StarPilot` `0b2061d` (vendored `opendbc_repo/`) | [`starpilot/`](starpilot/README.md) |
+| RetroPilot | `RetroPilot/openpilot` `c2` `b9a942ef` (openpilot 0.8.13 base; panda/opendbc submodules) | [`retropilot/`](retropilot/README.md) — `c2` hard-codes the RetroPilot retrofit fingerprint, so the Leaf isn't selected until that's reverted |
+| FlowPilot | `flowdriveai/flowpilot` `master` `59f5cf3f` (openpilot on Android; panda/opendbc submodules) | [`flowpilot/`](flowpilot/README.md) |
+
+The two older trees predate the alpha-longitudinal toggle and panda's shared
+longitudinal helpers: they opt in with the tree's own `DisableRadar` param and
+write the same bounds out by hand. Each ships a `fork.sh` that sets up its
+submodules, its pinned nix env and its tests.
 
 `check-forks.sh` applies each set to a fresh worktree at its pin and runs the
 nissan suites; `--latest` tries each fork's branch head instead, to catch drift
