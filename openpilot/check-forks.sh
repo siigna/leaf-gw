@@ -30,7 +30,7 @@ FORKS=(
   "sunnypilot sunnypilot/opendbc    master     11c61f3e sunnypilot ."
   "starpilot  StarPilotHQ/StarPilot StarPilot  0b2061d  starpilot  opendbc_repo"
   "retropilot RetroPilot/openpilot  c2         b9a942ef retropilot ."
-  "flowpilot  flowdriveai/flowpilot master     59f5cf3f flowpilot  ."
+  "flowpilot  jagheterfredrik/flowpilot master 9ea918ea flowpilot ."
 )
 
 fail=0

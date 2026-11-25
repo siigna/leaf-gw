@@ -88,12 +88,12 @@ the upstream patches don't apply there:
 | sunnypilot | `sunnypilot/opendbc` master `11c61f3e` | [`sunnypilot/`](sunnypilot/README.md) |
 | StarPilot | `StarPilotHQ/StarPilot` `StarPilot` `0b2061d` (vendored `opendbc_repo/`) | [`starpilot/`](starpilot/README.md) |
 | RetroPilot | `RetroPilot/openpilot` `c2` `b9a942ef` (openpilot 0.8.13 base; panda/opendbc submodules) | [`retropilot/`](retropilot/README.md) — `c2` hard-codes the RetroPilot retrofit fingerprint, so the Leaf isn't selected until that's reverted |
-| FlowPilot | `flowdriveai/flowpilot` `master` `59f5cf3f` (openpilot on Android; panda/opendbc submodules) | [`flowpilot/`](flowpilot/README.md) |
+| FlowPilot | `jagheterfredrik/flowpilot` `master` `9ea918ea` (openpilot on Android; the maintained fork, panda/opendbc vendored) | [`flowpilot/`](flowpilot/README.md) |
 
-The two older trees predate the alpha-longitudinal toggle and panda's shared
-longitudinal helpers: they opt in with the tree's own `DisableRadar` param and
-write the same bounds out by hand. Each ships a `fork.sh` that sets up its
-submodules, its pinned nix env and its tests.
+RetroPilot's tree predates the alpha-longitudinal toggle and panda's shared
+longitudinal helpers, so it opts in with its own `DisableRadar` param and writes
+the same bounds out by hand. RetroPilot and FlowPilot each ship a `fork.sh` that
+sets up the tree, its pinned nix env and its tests.
 
 `check-forks.sh` applies each set to a fresh worktree at its pin and runs the
 nissan suites; `--latest` tries each fork's branch head instead, to catch drift

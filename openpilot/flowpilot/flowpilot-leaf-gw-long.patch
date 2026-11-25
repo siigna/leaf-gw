@@ -1,16 +1,363 @@
+diff --git a/opendbc/nissan_leaf_2018.dbc b/opendbc/nissan_leaf_2018.dbc
+index 6483d9c..b7b9a72 100644
+--- a/opendbc/nissan_leaf_2018.dbc
++++ b/opendbc/nissan_leaf_2018.dbc
+@@ -202,6 +202,16 @@ BO_ 1549 DOORS_LIGHTS: 8 XXX
+ BO_ 1227 LKAS_SETTINGS: 8 XXX
+  SG_ LKAS_ENABLED : 51|1@0+ (1,0) [0|1] "" XXX
+ 
++BO_ 1535 LEAF_GW_HEARTBEAT: 8 XXX
++ SG_ MAGIC : 7|24@0+ (1,0) [0|16777215] "" XXX
++ SG_ VERSION : 31|8@0+ (1,0) [0|255] "" XXX
++ SG_ INLINE : 32|1@0+ (1,0) [0|1] "" XXX
++ SG_ OP_ACTIVE : 33|1@0+ (1,0) [0|1] "" XXX
++ SG_ COUNTER : 43|4@0+ (1,0) [0|15] "" XXX
++ SG_ CHECKSUM : 63|8@0+ (1,0) [0|255] "" XXX
++
++CM_ BO_ 1535 "leaf-gw gateway heartbeat (github.com/siigna/leaf-gw), 50 Hz on the gateway's V-CAN bus: 'LGW' version status counter 0 checksum, checksum = (0xFF + sum bytes 0..6) & 0xFF";
++
+ VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;
+ VAL_ 1228 PROPILOT_NA_MSGS 0 "NO_MSG" 1 "NA_FRONT_CAMERA_IMPARED" 2 "STEERING_ASSIST_ON_STANDBY" 3 "NA_PARKING_ASSIST_ENABLED" 4 "STEER_ASSIST_CURRENTLY_NA" 5 "NA_BAD_WEATHER" 6 "NA_PARK_BRAKE_ON" 7 "NA_SEATBELT_NOT_FASTENED" ;
+ VAL_ 1228 BOTTOM_MSG 0 "OK_STEER_ASSIST_SETTINGS" 1 "NO_MSG" 2 "PRESS_SET_TO_SET_SPEED" 3 "PRESS_RES_SET_TO_CHANGE_SPEED" 4 "PRESS_RES_TO_RESTART" 5 "NO_MSG" 6 "CRUISE_NOT_AVAIL" 7 "NO_MSG" ;
+diff --git a/panda/board/safety/safety_nissan.h b/panda/board/safety/safety_nissan.h
+index fd47e09..23c1602 100644
+--- a/panda/board/safety/safety_nissan.h
++++ b/panda/board/safety/safety_nissan.h
+@@ -3,6 +3,20 @@
+ #include "safety_declarations.h"
+ 
+ static bool nissan_alt_eps = false;
++static bool nissan_leaf_long = false;
++
++// leaf-gw longitudinal: openpilot sends the real 0x2B0 (propulsion/regen) and
++// 0x1C3 (friction brake) on the gateway's control bus (V-CAN). Bound them with
++// the shared longitudinal helpers; the gateway re-emits onto Chassis CAN and keeps
++// stock AEB by magnitude arbitration.
++#define NISSAN_GW_BUS 2
++const LongitudinalLimits NISSAN_LONG_LIMITS = {
++  // 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
++  .max_gas = 3415,       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
++  .min_gas = 2272,       // most acceleration openpilot may request (~+0.8 m/s^2)
++  .inactive_gas = 2595,  // PROPILOT_INACTIVE_RAW (stock idle frame)
++  .max_brake = 659,      // 0x1C3 pressure ceiling (0.5-count units)
++};
+ 
+ static void nissan_rx_hook(const CANPacket_t *to_push) {
+   int bus = GET_BUS(to_push);
+@@ -93,6 +107,23 @@ static bool nissan_tx_hook(const CANPacket_t *to_send) {
+     violation |= ((GET_BYTE(to_send, 1) & 0x3dU) > 0U);
+   }
+ 
++  // leaf-gw propulsion/regen request (0x2B0)
++  if (addr == 0x2b0) {
++    // T = data[2] << 4 | data[1] low nibble (inverted copy in data[1] high nibble + data[0])
++    int command = (GET_BYTE(to_send, 2) << 4) | (GET_BYTE(to_send, 1) & 0x0FU);
++    if (longitudinal_gas_checks(command, NISSAN_LONG_LIMITS)) {
++      violation = true;
++    }
++  }
++
++  // leaf-gw friction-brake request (0x1C3)
++  if (addr == 0x1c3) {
++    int pressure = ((GET_BYTE(to_send, 0) & 0x3FU) << 4) | (GET_BYTE(to_send, 1) >> 4);
++    if (longitudinal_brake_checks(pressure, NISSAN_LONG_LIMITS)) {
++      violation = true;
++    }
++  }
++
+   if (violation) {
+     tx = false;
+   }
+@@ -132,6 +163,18 @@ static safety_config nissan_init(uint16_t param) {
+     {0x280, 2, 8}   // CANCEL_MSG (Leaf)
+   };
+ 
++  // Leaf longitudinal adds the real 0x2B0/0x1C3 on the leaf-gw control bus.
++  static const CanMsg NISSAN_LEAF_LONG_TX_MSGS[] = {
++    {0x169, 0, 8},  // LKAS
++    {0x2b1, 0, 8},  // PROPILOT_HUD
++    {0x4cc, 0, 8},  // PROPILOT_HUD_INFO_MSG
++    {0x20b, 2, 6},  // CRUISE_THROTTLE (X-Trail)
++    {0x20b, 1, 6},  // CRUISE_THROTTLE (Altima)
++    {0x280, 2, 8},  // CANCEL_MSG (Leaf)
++    {0x2b0, NISSAN_GW_BUS, 8},  // ADAS propulsion/regen
++    {0x1c3, NISSAN_GW_BUS, 8},  // ADAS friction brake
++  };
++
+   // Signals duplicated below due to the fact that these messages can come in on either CAN bus, depending on car model.
+   static RxCheck nissan_rx_checks[] = {
+     {.msg = {{0x2, 0, 5, .frequency = 100U},
+@@ -148,11 +191,40 @@ static safety_config nissan_init(uint16_t param) {
+              {0x1cc, 0, 4, .frequency = 100U}}}, // DOORS_LIGHTS / BRAKE
+   };
+ 
++  // Leaf longitudinal also requires the leaf-gw heartbeat (0x5FF, 50 Hz) on the
++  // gateway bus: no gateway installed or alive -> rx checks fail -> no control.
++  static RxCheck nissan_leaf_long_rx_checks[] = {
++    {.msg = {{0x2, 0, 5, .frequency = 100U},
++             {0x2, 1, 5, .frequency = 100U}, { 0 }}},  // STEER_ANGLE_SENSOR
++    {.msg = {{0x285, 0, 8, .frequency = 50U},
++             {0x285, 1, 8, .frequency = 50U}, { 0 }}}, // WHEEL_SPEEDS_REAR
++    {.msg = {{0x30f, 2, 3, .frequency = 10U},
++             {0x30f, 1, 3, .frequency = 10U}, { 0 }}}, // CRUISE_STATE
++    {.msg = {{0x15c, 0, 8, .frequency = 50U},
++             {0x15c, 1, 8, .frequency = 50U},
++             {0x239, 0, 8, .frequency = 50U}}}, // GAS_PEDAL
++    {.msg = {{0x454, 0, 8, .frequency = 10U},
++             {0x454, 1, 8, .frequency = 10U},
++             {0x1cc, 0, 4, .frequency = 100U}}}, // DOORS_LIGHTS / BRAKE
++    {.msg = {{0x5ff, NISSAN_GW_BUS, 8, .frequency = 50U}, { 0 }, { 0 }}},  // LEAF_GW_HEARTBEAT
++  };
++
+   // EPS Location. false = V-CAN, true = C-CAN
+   const int NISSAN_PARAM_ALT_EPS_BUS = 1;
++  const int NISSAN_PARAM_LEAF_LONG = 2;
+ 
+   nissan_alt_eps = GET_FLAG(param, NISSAN_PARAM_ALT_EPS_BUS);
+-  return BUILD_SAFETY_CFG(nissan_rx_checks, NISSAN_TX_MSGS);
++  nissan_leaf_long = GET_FLAG(param, NISSAN_PARAM_LEAF_LONG);
++
++  safety_config ret;
++  if (nissan_leaf_long) {
++    SET_TX_MSGS(NISSAN_LEAF_LONG_TX_MSGS, ret);
++    SET_RX_CHECKS(nissan_leaf_long_rx_checks, ret);
++  } else {
++    SET_TX_MSGS(NISSAN_TX_MSGS, ret);
++    SET_RX_CHECKS(nissan_rx_checks, ret);
++  }
++  return ret;
+ }
+ 
+ const safety_hooks nissan_hooks = {
+diff --git a/panda/python/__init__.py b/panda/python/__init__.py
+index a210b7b..ef47d44 100644
+--- a/panda/python/__init__.py
++++ b/panda/python/__init__.py
+@@ -218,6 +218,7 @@ class Panda:
+   FLAG_SUBARU_PREGLOBAL_REVERSED_DRIVER_TORQUE = 1
+ 
+   FLAG_NISSAN_ALT_EPS_BUS = 1
++  FLAG_NISSAN_LEAF_LONG = 2
+ 
+   FLAG_GM_HW_CAM = 1
+   FLAG_GM_HW_CAM_LONG = 2
+diff --git a/panda/tests/safety/common.py b/panda/tests/safety/common.py
+index 884f21a..87ddd90 100644
+--- a/panda/tests/safety/common.py
++++ b/panda/tests/safety/common.py
+@@ -30,7 +30,7 @@ class CANPackerPanda(CANPacker):
+     msg = self.make_can_msg(name_or_addr, bus, values)
+     if fix_checksum is not None:
+       msg = fix_checksum(msg)
+-    addr, dat, bus = msg
++    addr, dat, bus = msg[0], msg[-2], msg[-1]  # the vendored opendbc packer returns [addr, 0, dat, bus]
+     return libpanda_py.make_CANPacket(addr, bus, dat)
+ 
+ 
+@@ -802,7 +802,7 @@ class PandaSafetyTest(PandaSafetyTestBase):
+         msg = make_msg(bus, addr)
+         self.safety.set_controls_allowed(1)
+         # TODO: this should be blocked
+-        if current_test in ["TestNissanSafety", "TestNissanSafetyAltEpsBus", "TestNissanLeafSafety"] and [addr, bus] in self.TX_MSGS:
++        if current_test in ["TestNissanSafety", "TestNissanSafetyAltEpsBus", "TestNissanLeafSafety", "TestNissanLeafLongSafety"] and [addr, bus] in self.TX_MSGS:
+           continue
+         self.assertFalse(self._tx(msg), f"transmit of {addr=:#x} {bus=} from {test_name} during {current_test} was allowed")
+ 
+diff --git a/panda/tests/safety/test_nissan.py b/panda/tests/safety/test_nissan.py
+index 4c83ca3..494d1fd 100755
+--- a/panda/tests/safety/test_nissan.py
++++ b/panda/tests/safety/test_nissan.py
+@@ -3,7 +3,7 @@ import unittest
+ from panda import Panda
+ from panda.tests.libpanda import libpanda_py
+ import panda.tests.safety.common as common
+-from panda.tests.safety.common import CANPackerPanda
++from panda.tests.safety.common import CANPackerPanda, make_msg
+ 
+ 
+ class TestNissanSafety(common.PandaCarSafetyTest, common.AngleSteeringSafetyTest):
+@@ -26,7 +26,7 @@ class TestNissanSafety(common.PandaCarSafetyTest, common.AngleSteeringSafetyTest
+   ANGLE_RATE_DOWN = [5., 3.5, .4]  # unwind limit
+ 
+   def setUp(self):
+-    self.packer = CANPackerPanda("nissan_x_trail_2017_generated")
++    self.packer = CANPackerPanda("nissan_x_trail_2017")
+     self.safety = libpanda_py.libpanda
+     self.safety.set_safety_hooks(Panda.SAFETY_NISSAN, 0)
+     self.safety.init_tests()
+@@ -86,7 +86,7 @@ class TestNissanSafetyAltEpsBus(TestNissanSafety):
+   CRUISE_BUS = 1
+ 
+   def setUp(self):
+-    self.packer = CANPackerPanda("nissan_x_trail_2017_generated")
++    self.packer = CANPackerPanda("nissan_x_trail_2017")
+     self.safety = libpanda_py.libpanda
+     self.safety.set_safety_hooks(Panda.SAFETY_NISSAN, Panda.FLAG_NISSAN_ALT_EPS_BUS)
+     self.safety.init_tests()
+@@ -95,7 +95,7 @@ class TestNissanSafetyAltEpsBus(TestNissanSafety):
+ class TestNissanLeafSafety(TestNissanSafety):
+ 
+   def setUp(self):
+-    self.packer = CANPackerPanda("nissan_leaf_2018_generated")
++    self.packer = CANPackerPanda("nissan_leaf_2018")
+     self.safety = libpanda_py.libpanda
+     self.safety.set_safety_hooks(Panda.SAFETY_NISSAN, 0)
+     self.safety.init_tests()
+@@ -113,5 +113,135 @@ class TestNissanLeafSafety(TestNissanSafety):
+     pass
+ 
+ 
++class TestNissanLeafLongSafety(TestNissanLeafSafety):
++  """Leaf longitudinal via the leaf-gw gateway. openpilot TXes the real 0x2B0 / 0x1C3
++  on the gateway's control bus (V-CAN, bus 2); panda bounds them with the shared
++  longitudinal helpers and gates on controls_allowed + gas-not-pressed."""
++
++  TX_MSGS = [[0x169, 0], [0x2b1, 0], [0x4cc, 0], [0x20b, 2], [0x280, 2], [0x2b0, 2], [0x1c3, 2]]
++
++  # mirrors selfdrive/car/nissan CarControllerParams and safety_nissan.h NISSAN_LONG_LIMITS
++  GW_BUS = 2
++  MAX_GAS = 3415       # 0x2B0 T: higher = more decel; the brake marker is the top
++  MIN_GAS = 2272
++  INACTIVE_GAS = 2595
++  MAX_BRAKE = 659
++
++  def setUp(self):
++    self.packer = CANPackerPanda("nissan_leaf_2018")
++    self.safety = libpanda_py.libpanda
++    self.safety.set_safety_hooks(Panda.SAFETY_NISSAN, Panda.FLAG_NISSAN_LEAF_LONG)
++    self.safety.init_tests()
++
++  def _accel_msg(self, command, active=True):
++    t = int(command)
++    inverse = (~t) & 0xFFF
++    aux = 2 if t == self.MAX_GAS else 0
++    return make_msg(self.GW_BUS, 0x2b0, 8, bytes([
++      inverse & 0xFF,
++      (((inverse >> 8) & 0xF) << 4) | (t & 0xF),
++      (t >> 4) & 0xFF,
++      0xAC, 0x5B if active else 0x1B, 0x00, 0x0E,
++      (aux << 2) | ((~aux) & 0x3),
++    ]))
++
++  def _brake_msg(self, pressure, active=True, brake_mode=False):
++    dat = bytearray(8)
++    dat[0] = (int(pressure) >> 4) & 0x3F
++    dat[1] = (int(pressure) & 0xF) << 4
++    dat[4] = 0x64
++    dat[5] = (0x80 if active else 0) | (0x04 if brake_mode else 0)
++    dat[6] = 0xFF
++    dat[7] = (0x01 + 0xC3 + sum(dat[:7])) & 0xFF
++    return make_msg(self.GW_BUS, 0x1c3, 8, bytes(dat))
++
++  def _heartbeat_msg(self, counter=0, bus=GW_BUS):
++    dat = bytes(b"LGW\x01\x01") + bytes([counter & 0xF, 0])
++    return make_msg(bus, 0x5ff, 8, dat + bytes([(0xFF + sum(dat)) & 0xFF]))
++
++  def test_leaf_gas_limits(self):
++    for allowed in (True, False):
++      self.safety.set_controls_allowed(allowed)
++      for cmd in [*range(0, 4096, 7), self.MIN_GAS - 1, self.MIN_GAS, self.MAX_GAS, self.MAX_GAS + 1, self.INACTIVE_GAS]:
++        should_tx = (allowed and self.MIN_GAS <= cmd <= self.MAX_GAS) or cmd == self.INACTIVE_GAS
++        self.assertEqual(should_tx, self._tx(self._accel_msg(cmd)), msg=f"{allowed=} gas={cmd}")
++
++  def test_leaf_brake_limits(self):
++    for allowed in (True, False):
++      self.safety.set_controls_allowed(allowed)
++      for p in [*range(0, 1024, 7), self.MAX_BRAKE, self.MAX_BRAKE + 1]:
++        should_tx = p == 0 or (allowed and p <= self.MAX_BRAKE)
++        self.assertEqual(should_tx, self._tx(self._brake_msg(p, active=p > 0, brake_mode=p > 0)), msg=f"{allowed=} brake={p}")
++
++  def test_leaf_long_only_on_gateway_bus(self):
++    self.safety.set_controls_allowed(True)
++    for bus in (0, 1):
++      self.assertFalse(self._tx(make_msg(bus, 0x2b0, 8, bytes.fromhex("a827d5ac5b000e09"))))
++      self.assertFalse(self._tx(make_msg(bus, 0x1c3, 8)))
++
++  def test_leaf_stock_frames(self):
++    # golden stock ZE1 frames: idle == inactive (always allowed), brake marker == max T
++    idle, marker = bytes.fromhex("dc53a2ac1b000e03"), bytes.fromhex("a827d5ac5b000e09")
++    self.safety.set_controls_allowed(False)
++    self.assertTrue(self._tx(make_msg(self.GW_BUS, 0x2b0, 8, idle)))
++    self.assertFalse(self._tx(make_msg(self.GW_BUS, 0x2b0, 8, marker)))
++    self.safety.set_controls_allowed(True)
++    self.assertTrue(self._tx(make_msg(self.GW_BUS, 0x2b0, 8, marker)))
++
++  def test_leaf_gas_pressed_blocks(self):
++    # driver on the accelerator -> longitudinal not allowed even while engaged
++    self.safety.set_controls_allowed(True)
++    self.safety.set_gas_pressed_prev(True)
++    self.assertFalse(self._tx(self._accel_msg(2500)))
++    self.assertFalse(self._tx(self._brake_msg(200)))
++    self.assertTrue(self._tx(self._accel_msg(self.INACTIVE_GAS, active=False)))
++    self.assertTrue(self._tx(self._brake_msg(0, active=False)))
++    self.safety.set_gas_pressed_prev(False)
++    self.assertTrue(self._tx(self._accel_msg(2500)))
++
++  def _feed_rx_checks(self, heartbeat):
++    self._rx(self._angle_meas_msg(0))
++    self._rx(self._speed_msg(0))
++    self._rx(self._pcm_status_msg(True))
++    self._rx(self._user_gas_msg(0))
++    self._rx(make_msg(0, 0x1cc, 4))  # BRAKE (Leaf sends 4 bytes)
++    if heartbeat:
++      self._rx(self._heartbeat_msg())
++
++  def _run_for(self, seconds, heartbeat, heartbeat_bus=None):
++    for _ in range(int(seconds * 50)):
++      self.t += 20000
++      self.safety.set_timer(self.t)
++      self._feed_rx_checks(heartbeat)
++      if heartbeat_bus is not None:
++        self._rx(self._heartbeat_msg(bus=heartbeat_bus))
++    self.safety.safety_tick_current_safety_config()
++
++  def test_leaf_gateway_heartbeat_required(self):
++    # LONG mode monitors the heartbeat as an rx check: when it stops, the safety
++    # tick drops controls_allowed
++    self.t = 0
++    self.safety.set_timer(self.t)
++    self.safety.set_controls_allowed(True)
++    self._run_for(3, heartbeat=True)
++    self.assertTrue(self.safety.safety_config_valid())
++    self.assertTrue(self.safety.get_controls_allowed())
++    self._run_for(1.5, heartbeat=False)
++    self.assertFalse(self.safety.get_controls_allowed())
++    # ... and only the gateway bus counts
++    self.safety.set_controls_allowed(True)
++    self._run_for(1.5, heartbeat=False, heartbeat_bus=0)
++    self.assertFalse(self.safety.get_controls_allowed())
++
++  def test_leaf_heartbeat_not_checked_without_long(self):
++    # lateral-only Leafs need no gateway: a missing heartbeat never drops control
++    self.safety.set_safety_hooks(Panda.SAFETY_NISSAN, 0)
++    self.t = 0
++    self.safety.set_timer(self.t)
++    self.safety.set_controls_allowed(True)
++    self._run_for(3, heartbeat=False)
++    self.assertTrue(self.safety.get_controls_allowed())
++
++
+ if __name__ == "__main__":
+   unittest.main()
 diff --git a/selfdrive/car/nissan/carcontroller.py b/selfdrive/car/nissan/carcontroller.py
-index bcf98fb..1e29445 100644
+index e00265a..5674473 100644
 --- a/selfdrive/car/nissan/carcontroller.py
 +++ b/selfdrive/car/nissan/carcontroller.py
-@@ -7,6 +7,7 @@ from selfdrive.car.nissan.values import CAR, CarControllerParams
- 
+@@ -1,10 +1,13 @@
+ from cereal import car
++from common.logger import sLogger
++from common.numpy_fast import clip, interp
+ from opendbc.can.packer import CANPacker
+ from selfdrive.car import apply_std_steer_angle_limits
+ from selfdrive.car.nissan import nissancan
+ from selfdrive.car.nissan.values import CAR, CarControllerParams
  
  VisualAlert = car.CarControl.HUDControl.VisualAlert
 +LongCtrlState = car.CarControl.Actuators.LongControlState
  
  
- class CarController():
-@@ -24,6 +25,33 @@ class CarController():
+ class CarController:
+@@ -25,6 +28,34 @@ class CarController:
  
      can_sends = []
  
@@ -19,12 +366,13 @@ index bcf98fb..1e29445 100644
 +    # friction brake) on the leaf-gw control bus. It does NOT silence the stock
 +    # ADAS ECU, so stock AEB stays live; the inline gateway re-emits these onto
 +    # Chassis CAN and yields to a stronger stock request (magnitude arbitration).
++    raw_accel, brake_pressure = None, 0
 +    if self.CP.openpilotLongitudinalControl and self.car_fingerprint in (CAR.LEAF, CAR.LEAF_IC):
 +      accel = clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
 +      stopping = actuators.longControlState == LongCtrlState.stopping
-+      brake_mode = c.longActive and (accel < CarControllerParams.PROPILOT_ACCEL_MIN or stopping)
++      brake_mode = CC.longActive and (accel < CarControllerParams.PROPILOT_ACCEL_MIN or stopping)
 +
-+      if c.longActive:
++      if CC.longActive:
 +        if brake_mode:
 +          raw_accel = CarControllerParams.PROPILOT_BRAKE_RAW
 +        else:
@@ -37,39 +385,43 @@ index bcf98fb..1e29445 100644
 +        brake_pressure = CarControllerParams.BRAKE_MAX
 +      brake_pressure = int(clip(brake_pressure, 0, CarControllerParams.BRAKE_MAX))
 +
-+      can_sends.append(nissancan.create_accel_command(raw_accel, frame, c.longActive))
-+      can_sends.append(nissancan.create_brake_command(brake_pressure, frame,
-+                                                      c.longActive and brake_pressure > 0, brake_mode))
++      can_sends.append(nissancan.create_accel_command(raw_accel, self.frame, CC.longActive))
++      can_sends.append(nissancan.create_brake_command(brake_pressure, self.frame,
++                                                      CC.longActive and brake_pressure > 0, brake_mode))
 +
      ### STEER ###
-     lkas_hud_msg = CS.lkas_hud_msg
-     lkas_hud_info_msg = CS.lkas_hud_info_msg
-@@ -83,5 +111,7 @@ class CarController():
+     steer_hud_alert = 1 if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) else 0
+ 
+@@ -75,6 +106,13 @@ class CarController:
  
      new_actuators = actuators.copy()
      new_actuators.steeringAngleDeg = apply_angle
 +    if self.CP.openpilotLongitudinalControl:
 +      new_actuators.accel = clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
++
++    # the Android UI shows "System Unresponsive!" unless a debug line starting with "0"
++    # arrives every 500 ms (OnRoadScreen.NoDebugMessagesWarning); Hyundai sends one per frame
++    if self.frame % 5 == 0:
++      sLogger.Send("0nissan" if raw_accel is None else f"0leaf-gw T{raw_accel} P{brake_pressure}")
  
+     self.frame += 1
      return new_actuators, can_sends
 diff --git a/selfdrive/car/nissan/interface.py b/selfdrive/car/nissan/interface.py
-index b854ad9..e736afd 100644
+index 573dff9..21d3711 100644
 --- a/selfdrive/car/nissan/interface.py
 +++ b/selfdrive/car/nissan/interface.py
-@@ -1,6 +1,9 @@
- # hard-forked from https://github.com/commaai/openpilot/tree/05b37552f3a38f914af41f44ccc7c633ad152a15/selfdrive/car/nissan/interface.py
+@@ -1,12 +1,20 @@
+ #!/usr/bin/env python3
  from cereal import car
--from selfdrive.car.nissan.values import CAR
 +from panda import Panda
-+from common.params import Params
+ from selfdrive.car import STD_CARGO_KG, get_safety_config
+ from selfdrive.car.interfaces import CarInterfaceBase
+-from selfdrive.car.nissan.values import CAR
 +from selfdrive.car.nissan.nissancan import LEAF_GW_HEARTBEAT, LEAF_LONG_BUS
 +from selfdrive.car.nissan.values import CAR, CarControllerParams
- from selfdrive.car import STD_CARGO_KG, scale_rot_inertia, scale_tire_stiffness, gen_empty_fingerprint, get_safety_config
- from selfdrive.car.interfaces import CarInterfaceBase
  
-@@ -9,6 +12,12 @@ class CarInterface(CarInterfaceBase):
-     super().__init__(CP, CarController, CarState)
-     self.cp_adas = self.CS.get_adas_can_parser(CP)
+ 
+ class CarInterface(CarInterfaceBase):
  
 +  @staticmethod
 +  def get_pid_accel_limits(CP, current_speed, cruise_speed):
@@ -78,36 +430,46 @@ index b854ad9..e736afd 100644
 +    return CarInterfaceBase.get_pid_accel_limits(CP, current_speed, cruise_speed)
 +
    @staticmethod
-   def get_params(candidate, fingerprint=gen_empty_fingerprint(), car_fw=None):
- 
-@@ -42,6 +51,21 @@ class CarInterface(CarInterfaceBase):
+   def _get_params(ret, candidate, fingerprint, car_fw, experimental_long, docs):
+     ret.carName = "nissan"
+@@ -21,6 +29,23 @@ class CarInterface(CarInterfaceBase):
      ret.steerControlType = car.CarParams.SteerControlType.angle
-     ret.radarOffCan = True
+     ret.radarUnavailable = True
  
 +    # Longitudinal via the inline leaf-gw Chassis CAN gateway (github.com/siigna/leaf-gw).
-+    # openpilot emits the real 0x2B0/0x1C3 on the gateway's control bus; the gateway
-+    # keeps the stock ADAS ECU live and preserves AEB by magnitude arbitration. No ECU
-+    # silencing and no cruise-button spoofing -- that is the whole point.
-+    # Opt-in through this tree's alpha-longitudinal toggle (DisableRadar, kept only
-+    # with DisableRadar_Allow, as Honda Bosch / Hyundai), and offered only when the
-+    # gateway's heartbeat is on its bus: without the gateway the frames reach nothing.
-+    # pcmCruise stays True (as Toyota TSS2): stock ProPILOT engagement gates control and
-+    # panda keys controls_allowed off it; openpilot supplies the accel. pcmCruise=False
-+    # would make controlsd cancel the very cruise panda needs.
-+    if candidate in (CAR.LEAF, CAR.LEAF_IC) and LEAF_GW_HEARTBEAT in fingerprint.get(LEAF_LONG_BUS, {}):
-+      ret.openpilotLongitudinalControl = Params().get_bool("DisableRadar")
++    # openpilot emits the real 0x2B0/0x1C3 on the gateway's control bus; the
++    # gateway keeps the stock ADAS ECU live and preserves AEB by magnitude
++    # arbitration. No ECU takeover in init() -- that is the whole point.
++    # Offered only when the gateway's heartbeat is on its bus: without the gateway
++    # the frames reach nothing and stock ProPILOT would really be driving.
++    ret.experimentalLongitudinalAvailable = (candidate in (CAR.LEAF, CAR.LEAF_IC) and
++                                             LEAF_GW_HEARTBEAT in fingerprint.get(LEAF_LONG_BUS, {}))
++    ret.openpilotLongitudinalControl = experimental_long and ret.experimentalLongitudinalAvailable
++    # pcmCruise stays True (as Toyota / Honda Nidec): stock ProPILOT engagement gates
++    # control and panda keys controls_allowed off it; openpilot supplies the accel.
++    # pcmCruise=False would make openpilot cancel the very cruise panda needs.
++
 +    if ret.openpilotLongitudinalControl:
 +      ret.safetyConfigs[0].safetyParam |= Panda.FLAG_NISSAN_LEAF_LONG
++      ret.stopAccel = -2.0
 +
-     # TODO: get actual value, for now starting with reasonable value for
-     # civic and scaling by mass and wheelbase
-     ret.rotationalInertia = scale_rot_inertia(ret.mass, ret.wheelbase)
+     if candidate in (CAR.ROGUE, CAR.XTRAIL):
+       ret.mass = 1610 + STD_CARGO_KG
+       ret.wheelbase = 2.705
+@@ -56,5 +81,6 @@ class CarInterface(CarInterfaceBase):
+ 
+     return ret
+ 
+-  def apply(self, c, now_nanos):
+-    return self.CC.update(c, self.CS, now_nanos)
++  # controlsd calls CI.apply(CC, sm, now_nanos); test_car_interfaces still calls apply(CC, now_nanos)
++  def apply(self, c, sm, now_nanos=0):
++    return self.CC.update(c, sm, self.CS, now_nanos)
 diff --git a/selfdrive/car/nissan/nissancan.py b/selfdrive/car/nissan/nissancan.py
-index 3fc19b8..1f89888 100644
+index 01fb346..13b5b46 100644
 --- a/selfdrive/car/nissan/nissancan.py
 +++ b/selfdrive/car/nissan/nissancan.py
-@@ -1,8 +1,16 @@
- # hard-forked from https://github.com/commaai/openpilot/tree/05b37552f3a38f914af41f44ccc7c633ad152a15/selfdrive/car/nissan/nissancan.py
+@@ -1,7 +1,15 @@
  import copy
  import crcmod
 +from selfdrive.car import make_can_msg
@@ -120,10 +482,10 @@ index 3fc19b8..1f89888 100644
 +# the fingerprint saw it, and panda drops control if it stops.
 +LEAF_GW_HEARTBEAT = 0x5FF
 +
+ # TODO: add this checksum to the CANPacker
  nissan_checksum = crcmod.mkCrcFun(0x11d, initCrc=0x00, rev=False, xorOut=0xff)
  
- 
-@@ -70,3 +78,35 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
+@@ -65,3 +73,35 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
      values["HANDS_ON_WHEEL_WARNING"] = 1
  
    return packer.make_can_msg("PROPILOT_HUD_INFO_MSG", 0, values)
@@ -164,19 +526,20 @@ new file mode 100644
 index 0000000..e69de29
 diff --git a/selfdrive/car/nissan/tests/test_leaf_gw.py b/selfdrive/car/nissan/tests/test_leaf_gw.py
 new file mode 100644
-index 0000000..44b4ceb
+index 0000000..fe6ce88
 --- /dev/null
 +++ b/selfdrive/car/nissan/tests/test_leaf_gw.py
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,192 @@
 +#!/usr/bin/env python3
 +# Leaf longitudinal via the inline leaf-gw Chassis CAN gateway (github.com/siigna/leaf-gw).
 +import unittest
++from unittest import mock
 +
 +from cereal import car
-+from common.params import Params
 +from opendbc.can.packer import CANPacker
 +from panda import Panda
 +from selfdrive.car import gen_empty_fingerprint
++from selfdrive.car.nissan import carcontroller
 +from selfdrive.car.nissan.carcontroller import CarController
 +from selfdrive.car.nissan.carstate import CarState
 +from selfdrive.car.nissan.interface import CarInterface
@@ -194,6 +557,10 @@ index 0000000..44b4ceb
 +  return fp
 +
 +
++def _get_params(car_name, fp, experimental_long):
++  return CarInterface.get_params(car_name, fp, [], experimental_long, False)
++
++
 +def _decode_accel(dat):
 +  # mirrors safety_nissan.h and the gateway: T = b2<<4 | b1_lo, inverted copy in b1_hi:b0
 +  t = (dat[2] << 4) | (dat[1] & 0xF)
@@ -203,44 +570,40 @@ index 0000000..44b4ceb
 +  return t
 +
 +
++def _pressure(dat):
++  return ((dat[0] & 0x3F) << 4) | (dat[1] >> 4)
++
++
 +class TestLeafGatewayLongitudinal(unittest.TestCase):
-+  def setUp(self):
-+    self.params = Params()
-+
-+  def tearDown(self):
-+    self.params.delete("DisableRadar")
-+
-+  def _get_params(self, car_name, fp, alpha_long):
-+    self.params.put_bool("DisableRadar", alpha_long)
-+    return CarInterface.get_params(car_name, fp, [])
-+
 +  def test_long_keeps_pcm_cruise(self):
 +    # openpilot cancels stock cruise when pcmCruise is False, and panda only allows
 +    # control while stock cruise is engaged -- so gateway long must keep pcmCruise
 +    for car_name in LEAFS:
-+      CP = self._get_params(car_name, _fp(), True)
++      CP = _get_params(car_name, _fp(), True)
++      self.assertTrue(CP.experimentalLongitudinalAvailable)
 +      self.assertTrue(CP.openpilotLongitudinalControl)
 +      self.assertTrue(CP.pcmCruise)
++      self.assertFalse(CP.autoResumeSng)
 +      self.assertEqual(CP.safetyConfigs[0].safetyParam, Panda.FLAG_NISSAN_LEAF_LONG)
 +
-+  def test_long_off_by_default(self):
-+    self.params.delete("DisableRadar")
++  def test_long_off_without_experimental_toggle(self):
 +    for car_name in LEAFS:
-+      CP = CarInterface.get_params(car_name, _fp(), [])
++      CP = _get_params(car_name, _fp(), False)
++      self.assertTrue(CP.experimentalLongitudinalAvailable)
 +      self.assertFalse(CP.openpilotLongitudinalControl)
 +      self.assertEqual(CP.safetyConfigs[0].safetyParam, 0)
-+    CP = self._get_params(CAR.LEAF, _fp(), False)
-+    self.assertFalse(CP.openpilotLongitudinalControl)
 +
 +  def test_long_needs_gateway_heartbeat(self):
 +    for fp in (_fp(gateway=False), _fp(bus=0), _fp(bus=1)):
-+      CP = self._get_params(CAR.LEAF, fp, True)
++      CP = _get_params(CAR.LEAF, fp, True)
++      self.assertFalse(CP.experimentalLongitudinalAvailable)
 +      self.assertFalse(CP.openpilotLongitudinalControl)
 +      self.assertEqual(CP.safetyConfigs[0].safetyParam, 0)
 +
 +  def test_other_nissans_unaffected(self):
 +    for car_name, param in ((CAR.ROGUE, 0), (CAR.XTRAIL, 0), (CAR.ALTIMA, Panda.FLAG_NISSAN_ALT_EPS_BUS)):
-+      CP = self._get_params(car_name, _fp(), True)
++      CP = _get_params(car_name, _fp(), True)
++      self.assertFalse(CP.experimentalLongitudinalAvailable)
 +      self.assertFalse(CP.openpilotLongitudinalControl)
 +      self.assertEqual(CP.safetyConfigs[0].safetyParam, param)
 +
@@ -257,7 +620,7 @@ index 0000000..44b4ceb
 +    for p in range(0, 1024):
 +      addr, _, dat, bus = create_brake_command(p, p, True, True)
 +      self.assertEqual((addr, bus), (0x1C3, LEAF_LONG_BUS))
-+      self.assertEqual(((dat[0] & 0x3F) << 4) | (dat[1] >> 4), p)
++      self.assertEqual(_pressure(dat), p)
 +      self.assertEqual(dat[7], (0x01 + 0xC3 + sum(dat[:7])) & 0xFF)
 +
 +  def test_packers_match_spec(self):
@@ -274,20 +637,6 @@ index 0000000..44b4ceb
 +          for brake_mode in (False, True):
 +            self.assertEqual(create_brake_command(p, frame, active, brake_mode)[2], spec.pack_brake(p, frame, active, brake_mode))
 +
-+  def test_controller_matches_spec(self):
-+    # the accel -> (T, pressure) mapping is leaf-gw's gateway_longitudinal
-+    try:
-+      from selfdrive.car.nissan import leaf_gw_long as spec
-+    except ImportError:
-+      raise unittest.SkipTest("leaf_gw_long.py not copied into selfdrive/car/nissan")
-+    for accel in (-4.0, -2.5, -1.0, -0.78, -0.6, -0.3, -0.07, 0.0, 0.02, 0.3, 0.7, 0.79, 1.5):
-+      for stopping, v_ego in ((False, 10.), (True, 0.)):
-+        _, sent = self._run_controller(True, accel, stopping=stopping, v_ego=v_ego)
-+        t, pressure, _, _ = spec.gateway_longitudinal(accel, True, stopping, v_ego)
-+        d = sent[(0x1C3, LEAF_LONG_BUS)]
-+        self.assertEqual((_decode_accel(sent[(0x2B0, LEAF_LONG_BUS)]), ((d[0] & 0x3F) << 4) | (d[1] >> 4)), (t, pressure),
-+                         msg=f"{accel=} {stopping=}")
-+
 +  def test_heartbeat_dbc(self):
 +    # LEAF_GW_HEARTBEAT in the Leaf DBC lays out the gateway's bytes: 'LGW' version status counter 0 checksum
 +    dat = bytes(b"LGW\x01\x03") + bytes([5, 0])
@@ -297,8 +646,8 @@ index 0000000..44b4ceb
 +    self.assertEqual((addr, bus), (LEAF_GW_HEARTBEAT, LEAF_LONG_BUS))
 +    self.assertEqual(packed, dat)
 +
-+  def _run_controller(self, alpha_long, accel, long_active=True, stopping=False, v_ego=10.):
-+    CP = self._get_params(CAR.LEAF, _fp(), alpha_long)
++  def _run_controller(self, experimental_long, accel, long_active=True, stopping=False, v_ego=10., frames=5):
++    CP = _get_params(CAR.LEAF, _fp(), experimental_long)
 +    CI = CarInterface(CP, CarController, CarState)
 +    CC = car.CarControl.new_message()
 +    CC.enabled = CC.latActive = True
@@ -309,8 +658,8 @@ index 0000000..44b4ceb
 +    CI.CS.out = CI.CS.out.as_builder()
 +    CI.CS.out.vEgo = v_ego
 +    sent = []
-+    for _ in range(4):
-+      actuators, can_sends = CI.apply(CC)  # controlsd passes the builder
++    for _ in range(frames):
++      actuators, can_sends = CI.apply(CC, None, 0)  # controlsd: CI.apply(CC, sm, now_nanos)
 +      sent += can_sends
 +    return actuators, {(m[0], m[3]): m[2] for m in sent}
 +
@@ -319,7 +668,7 @@ index 0000000..44b4ceb
 +    for accel, t in ((-0.5, 2730), (-0.45, 2720), (0.0, 2528), (0.79, 2272), (2.0, 2272)):
 +      _, sent = self._run_controller(True, accel)
 +      self.assertEqual(_decode_accel(sent[(0x2B0, LEAF_LONG_BUS)]), t, msg=f"{accel=}")
-+      self.assertEqual(sent[(0x1C3, LEAF_LONG_BUS)][0:2], b"\x00\x00")
++      self.assertEqual(_pressure(sent[(0x1C3, LEAF_LONG_BUS)]), 0)
 +    # higher T = more decel
 +    _, a = self._run_controller(True, -0.3)
 +    _, b = self._run_controller(True, 0.3)
@@ -327,35 +676,57 @@ index 0000000..44b4ceb
 +    # hard decel: brake marker + friction pressure
 +    _, sent = self._run_controller(True, -2.5)
 +    self.assertEqual(_decode_accel(sent[(0x2B0, LEAF_LONG_BUS)]), CarControllerParams.PROPILOT_BRAKE_RAW)
-+    d = sent[(0x1C3, LEAF_LONG_BUS)]
-+    self.assertEqual(((d[0] & 0x3F) << 4) | (d[1] >> 4), round((CarControllerParams.PROPILOT_ACCEL_MIN + 2.5) * CarControllerParams.BRAKE_GAIN))
++    self.assertEqual(_pressure(sent[(0x1C3, LEAF_LONG_BUS)]),
++                     round((CarControllerParams.PROPILOT_ACCEL_MIN + 2.5) * CarControllerParams.BRAKE_GAIN))
 +    # stopped and holding: full hold pressure
 +    _, sent = self._run_controller(True, -0.2, stopping=True, v_ego=0.)
-+    d = sent[(0x1C3, LEAF_LONG_BUS)]
-+    self.assertEqual(((d[0] & 0x3F) << 4) | (d[1] >> 4), CarControllerParams.BRAKE_MAX)
++    self.assertEqual(_pressure(sent[(0x1C3, LEAF_LONG_BUS)]), CarControllerParams.BRAKE_MAX)
 +    # not long active: only the inactive no-op frames (what panda allows when disengaged)
 +    _, sent = self._run_controller(True, -2.5, long_active=False)
 +    self.assertEqual(_decode_accel(sent[(0x2B0, LEAF_LONG_BUS)]), CarControllerParams.PROPILOT_INACTIVE_RAW)
-+    self.assertEqual(sent[(0x1C3, LEAF_LONG_BUS)][0:2], b"\x00\x00")
++    self.assertEqual(_pressure(sent[(0x1C3, LEAF_LONG_BUS)]), 0)
++
++  def test_controller_matches_spec(self):
++    # the accel -> (T, pressure) mapping is leaf-gw's gateway_longitudinal
++    try:
++      from selfdrive.car.nissan import leaf_gw_long as spec
++    except ImportError:
++      raise unittest.SkipTest("leaf_gw_long.py not copied into selfdrive/car/nissan")
++    for accel in (-4.0, -2.5, -1.0, -0.78, -0.6, -0.3, -0.07, 0.0, 0.02, 0.3, 0.7, 0.79, 1.5):
++      for stopping, v_ego in ((False, 10.), (True, 0.)):
++        _, sent = self._run_controller(True, accel, stopping=stopping, v_ego=v_ego, frames=1)
++        t, pressure, _, _ = spec.gateway_longitudinal(accel, True, stopping, v_ego)
++        self.assertEqual((_decode_accel(sent[(0x2B0, LEAF_LONG_BUS)]), _pressure(sent[(0x1C3, LEAF_LONG_BUS)])), (t, pressure),
++                         msg=f"{accel=} {stopping=}")
 +
 +  def test_controller_silent_without_long(self):
 +    _, sent = self._run_controller(False, -2.5)
 +    self.assertFalse({0x2B0, 0x1C3} & {addr for addr, _ in sent})
 +
 +  def test_accel_limits(self):
-+    CP = self._get_params(CAR.LEAF, _fp(), True)
++    CP = _get_params(CAR.LEAF, _fp(), True)
 +    self.assertEqual(CarInterface.get_pid_accel_limits(CP, 10., 20.), (CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
 +    actuators, _ = self._run_controller(True, -9.)
 +    self.assertEqual(actuators.accel, CarControllerParams.ACCEL_MIN)
++
++  def test_ui_debug_line(self):
++    # the Android UI flags "System Unresponsive!" without a "0..." debug line every 500 ms
++    for long in (False, True):
++      with mock.patch.object(carcontroller.sLogger, "Send") as send:
++        self._run_controller(long, -0.5, frames=10)  # 10 frames = 200 ms at controlsd's 50 Hz
++      lines = [c.args[0] for c in send.call_args_list]
++      self.assertEqual(len(lines), 2)
++      self.assertTrue(all(line.startswith("0") for line in lines), lines)
++      self.assertEqual(lines[0], "0leaf-gw T2730 P0" if long else "0nissan")
 +
 +
 +if __name__ == "__main__":
 +  unittest.main()
 diff --git a/selfdrive/car/nissan/values.py b/selfdrive/car/nissan/values.py
-index 6db5a06..dbb614e 100644
+index 6105b40..b339707 100644
 --- a/selfdrive/car/nissan/values.py
 +++ b/selfdrive/car/nissan/values.py
-@@ -11,6 +11,20 @@ class CarControllerParams:
+@@ -16,6 +16,20 @@ class CarControllerParams:
    LKAS_MAX_TORQUE = 1               # A value of 1 is easy to overpower
    STEER_THRESHOLD = 1.0
  
@@ -373,6 +744,6 @@ index 6db5a06..dbb614e 100644
 +  BRAKE_MAX = 659
 +  BRAKE_GAIN = 264.0
 +
- class CAR:
-   XTRAIL = "NISSAN X-TRAIL 2017"
-   LEAF = "NISSAN LEAF 2018"
+   def __init__(self, CP):
+     pass
+ 

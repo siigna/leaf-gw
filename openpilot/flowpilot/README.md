@@ -1,146 +1,131 @@
 # FlowPilot: Nissan Leaf longitudinal via leaf-gw
 
-This is the same design as the upstream patches in [`..`](../README.md), ported to
-FlowPilot (openpilot on Android). openpilot emits the real `0x2B0`
-(propulsion/regen) and `0x1C3` (friction brake) frames on bus 2 (`LEAF_LONG_BUS`).
-The stock ADAS ECU is not silenced, so AEB stays live, and cruise buttons are not
-spoofed. `pcmCruise` stays True. The `0x5FF` gateway heartbeat gates the feature
-twice: openpilot offers longitudinal only if the heartbeat is in the fingerprint,
-and panda drops control if the heartbeat stops.
+This is the upstream design (see [`..`](../README.md)) ported to FlowPilot, i.e. openpilot on Android.
 
-FlowPilot is a hard fork of openpilot `05b37552` (late 2022). Its car code
-predates opendbc's `car/` split, `LongitudinalLimits`, `alpha_long` and
-`CanData`, so the upstream patches don't apply here. This port rewrites them
-against the old APIs.
+- openpilot emits the real `0x2B0` (propulsion/regen) and `0x1C3` (friction brake) frames on bus 2 (`LEAF_LONG_BUS`).
+- The stock ADAS ECU is not silenced, so AEB stays live, and cruise buttons are not spoofed.
+- `pcmCruise` stays True.
+- The `0x5FF` gateway heartbeat (50 Hz) gates the feature twice: openpilot offers longitudinal only if the heartbeat is in the bus-2 fingerprint, and panda drops control when the heartbeat stops.
 
-## Base commits
+**Target:** [`jagheterfredrik/flowpilot`](https://github.com/jagheterfredrik/flowpilot), the FlowPilot people use today. This port **replaces** the earlier one for `flowdriveai/flowpilot`, which is dormant; those patches are gone. jagheterfredrik is phr00t's fork plus 54 commits, on an openpilot 0.9-era base. panda, opendbc and cereal are **vendored** directories here, so there is one patch at the repo root.
 
-| repo | path | commit |
-|---|---|---|
-| `flowdriveai/flowpilot` | `.` | `59f5cf3ff0fb5ca7b483b146f3bf4fee30239410` (master, 2024-05-17, `FLOWPILOT_VERSION` 0.2.3) |
-| `flow-drive-ai/panda` | `panda/` | `f120999e19fed7208534ae74b542b5cca6bafeaa` (2022-09-14) |
-| `flow-drive-ai/opendbc` | `opendbc/` | `7d966b5c24db3c4fe49b379511264ebff7a57e91` (2022-09-15) |
-| `flow-drive-ai/cereal` | `cereal/` | `92f47d2efb61fcc348c39ebe2fc6a5e73570b2d0` (unchanged) |
+## Base
+
+`jagheterfredrik/flowpilot` master `9ea918eaa0b056fba55d22feb4ec99deab245100` (2025-03-04).
 
 ## Files
 
-- **`flowpilot-leaf-gw-long.patch`** applies at the flowpilot root and touches `selfdrive/car/nissan/`:
-  - `values.py`: `CarControllerParams` longitudinal constants. `0x2B0` carries T = `(d2 << 4) | (d1 & 0xF)`, where higher T means more deceleration. The curve is `ACCEL_BP` = [-0.78, -0.45, -0.11, -0.04, 0.0, 0.05, 0.09, 0.59, 0.79] m/s² against `T_BP` = [2784, 2720, 2656, 2592, 2528, 2464, 2400, 2336, 2272], which is provisional: it is the median of stock Leaf logs, not bench-tested. `PROPILOT_ACCEL_MIN` = `ACCEL_BP[0]` and `ACCEL_MAX` = `ACCEL_BP[-1]`. The other constants are ACCEL_MIN -3.5, INACTIVE 2595, BRAKE_RAW (marker) 3415, BRAKE_MAX 659 and BRAKE_GAIN 264.
-  - `nissancan.py`: `LEAF_LONG_BUS = 2`, `LEAF_GW_HEARTBEAT = 0x5FF`, and `create_accel_command` / `create_brake_command`. The bytes are identical to `leaf_gw_long.pack_accel` / `pack_brake`: T is clipped to 0..4095, its inverse goes in `d1_hi:d0`, and aux is 2 only for the 3415 marker; the code returns this era's `[addr, 0, dat, bus]`.
-  - `carcontroller.py`: computes `T = round(interp(accel, ACCEL_BP, T_BP))`, or the 3415 marker in brake mode, and pressure = `round(max(0, PROPILOT_ACCEL_MIN - accel) * BRAKE_GAIN)`. This is exactly the upstream patch and `gateway_longitudinal`. It sends both frames every frame, and clips `actuators.accel` in the returned actuators.
-  - `interface.py`: adds the opt-in (below), the heartbeat gate, `Panda.FLAG_NISSAN_LEAF_LONG` in `safetyParam`, and `get_pid_accel_limits`. It adds no ECU takeover and leaves `pcmCruise` True.
-  - `tests/test_leaf_gw.py` (new, 12 tests): the opt-in, heartbeat and `pcmCruise` gates; other Nissans unchanged; golden stock frames; pack/decode round-trip; the DBC heartbeat layout; the controller's T on the curve (higher T means more decel) and its frames when braking, stopped and disengaged; accel limits. Two tests need `leaf_gw_long.py` copied into `selfdrive/car/nissan/` and skip otherwise. `test_packers_match_spec` compares the packers byte for byte against the spec for every T in -8..4199, every frame counter and both active states. `test_controller_matches_spec` checks the controller's (T, pressure) against `gateway_longitudinal`.
-- **`panda.patch`** applies at the panda submodule root:
-  - `board/safety/safety_nissan.h`:
-    - Flags: `NISSAN_PARAM_ALT_EPS_BUS = 1`, `NISSAN_PARAM_LEAF_LONG = 2`. `GET_FLAG` replaces the old `param ? 1 : 0`, which would have read the new flag as alt-EPS.
-    - LONG mode switches to its own TX list (adds `0x2b0` and `0x1c3` on bus 2) and its own addr-check list (adds `0x5ff` on bus 2, 20 ms / 50 Hz).
-    - Explicit bounds use the tx hook's `longitudinal_allowed`, which is `get_longitudinal_allowed()`: controls allowed and gas not pressed. This panda has no `LongitudinalLimits` helpers.
-    - `0x2B0`: `T = (d2<<4)|(d1&0xF)`. It must be 2272..3415 while longitudinal is allowed; otherwise only the idle value 2595 passes.
-    - `0x1C3`: pressure must be <= 659, and 0 when longitudinal is not allowed.
-  - `python/__init__.py`: `FLAG_NISSAN_ALT_EPS_BUS = 1` and `FLAG_NISSAN_LEAF_LONG = 2`.
-  - `tests/safety/test_nissan.py`: new `TestNissanLeafLongSafety` class that subclasses the Leaf test, so every base test also runs in LONG mode. It adds gas and brake limits (engaged and disengaged), gateway bus only, golden stock frames, gas-pressed blocking, the heartbeat as an rx check (it lags and controls drop, and a heartbeat on bus 0 doesn't count), and no heartbeat needed without LONG. `tests/safety/common.py` adds the new class to the existing Nissan exception in `test_tx_hook_on_wrong_safety_mode`.
-- **`opendbc.patch`** applies at the opendbc submodule root. It adds `BO_ 1535 LEAF_GW_HEARTBEAT` (with the same signals and comment as upstream) to `nissan_leaf_2018.dbc`. This opendbc has no `generator/` for Nissan, so the edit goes into the hand-written DBC.
+- **`flowpilot-leaf-gw-long.patch`**: applies at the repo root with `git apply`.
+  - `selfdrive/car/nissan/values.py`: `CarControllerParams`, the same values as upstream.
+    - `0x2B0` carries T = `(d2 << 4) | (d1 & 0xF)`, with an inverted copy in `d1_hi:d0`. Higher T means more deceleration.
+    - Curve: `ACCEL_BP` = [-0.78 … 0.79] m/s² mapped to `T_BP` = [2784 … 2272]. It is provisional: the median of stock Leaf logs, not bench-tested.
+    - `PROPILOT_ACCEL_MIN` = `ACCEL_BP[0]` and `ACCEL_MAX` = `ACCEL_BP[-1]`.
+    - Idle 2595, brake marker 3415, `ACCEL_MIN` -3.5, `BRAKE_MAX` 659, `BRAKE_GAIN` 264.
+  - `nissancan.py`: `LEAF_LONG_BUS`, `LEAF_GW_HEARTBEAT`, and `create_accel_command` / `create_brake_command`. These are byte-identical to `leaf_gw_long.pack_accel` / `pack_brake`: T is clipped to 0..4095, and aux is 2 only for the marker. They return this tree's `[addr, 0, dat, bus]`.
+  - `carcontroller.py`:
+    - T = `round(interp(accel, ACCEL_BP, T_BP))`, or the marker in brake mode.
+    - Pressure = `round(max(0, PROPILOT_ACCEL_MIN - accel) * BRAKE_GAIN)`, or `BRAKE_MAX` when stopping below `vEgoStopping`. Both frames go out every frame.
+    - It also sends the UI debug line (see below).
+  - `interface.py`:
+    - `experimentalLongitudinalAvailable` = Leaf and `0x5FF` in `fingerprint[2]`.
+    - `openpilotLongitudinalControl` = `experimental_long and available`.
+    - `Panda.FLAG_NISSAN_LEAF_LONG` goes into `safetyParam`; also `stopAccel` -2.0 and `get_pid_accel_limits`.
+    - `pcmCruise` stays True and `autoResumeSng` stays False. There is no ECU takeover.
+    - It also fixes `apply()` (see below).
+  - `tests/test_leaf_gw.py` (new, 13 tests):
+    - Gates: the experimental toggle, the heartbeat (absent, or on the wrong bus), and `pcmCruise`; other Nissans are unchanged.
+    - Frames: golden stock frames, pack/decode round-trip for every T, the brake frame, and the DBC heartbeat layout.
+    - Controller: T on the curve (higher T means more decel), and the frames when braking, stopped, disengaged, and with long off. Accel limits.
+    - The UI debug line.
+    - Spec checks: `test_packers_match_spec` compares byte for byte with `pack_accel` / `pack_brake` (T in -8..4199, all counters, both active states). `test_controller_matches_spec` checks (T, pressure) against `gateway_longitudinal`. Both skip unless `leaf_gw_long.py` is copied into `selfdrive/car/nissan/`; `fork.sh` copies it.
+  - `opendbc/nissan_leaf_2018.dbc`: `BO_ 1535 LEAF_GW_HEARTBEAT`, the same as upstream, at 50 Hz.
+  - `panda/board/safety/safety_nissan.h`: mirrors upstream `nissan.h`.
+    - `NISSAN_LONG_LIMITS`: `max_gas` 3415, `min_gas` 2272, `inactive_gas` 2595, `max_brake` 659.
+    - It uses the shared `longitudinal_gas_checks` / `longitudinal_brake_checks`. These go through `get_longitudinal_allowed()`, so they block when the driver presses the accelerator.
+    - Command decode is `(d2<<4)|(d1&0xF)`.
+    - The LONG flag (2) selects a TX list with `0x2b0`/`0x1c3` on bus 2, and an rx-check list that adds `0x5ff` on bus 2 at 50 Hz.
+  - `panda/python/__init__.py`: `FLAG_NISSAN_LEAF_LONG = 2`.
+  - `panda/tests/safety/test_nissan.py`: new `TestNissanLeafLongSafety`. It runs every base test in LONG mode plus:
+    - gas and brake limits, engaged and disengaged
+    - gateway bus only
+    - golden stock frames
+    - gas pressed blocks
+    - heartbeat required: with it, control stays; when it stops, control drops; a heartbeat on bus 0 doesn't count
+    - no heartbeat needed without LONG
 
-## Opt-in: `DisableRadar` (default off)
+    The class is also added to the Nissan exception in `common.py`'s `test_tx_hook_on_wrong_safety_mode`.
+- **`fork.sh`**: the `check-forks.sh` hook. It applies the patch, copies the spec in, and inside `shell.nix` builds the host libraries with `SConstruct.test` and `libpanda.so`. It then runs the four suites with a temporary `HOME` and prints one line per suite.
+- **`shell.nix`**: nixpkgs pinned by `fetchTarball` + sha256 to leaf-gw's `flake.lock` rev `619c39f6`.
+  - Python 3.12 with Cython 3, numpy 2, pycapnp, cffi, pytest, pytest-xdist and the rest.
+  - clang, capnproto, zeromq, lmdb, libusb1, eigen and scons.
+  - It sets `FP_PY`, `FP_INC` and `FP_LIB`.
+- **`SConstruct.test`**: builds `params_pyx`, `clock`, `simple_kalman_impl`, `transformations`, opendbc's `libdbc`/packer/parser, `messaging_pyx` (via `cereal/SConscript`) and `boardd_api_impl`. It is needed because the root SConstruct is Android-only, and `opendbc/can/SConscript` hard-links `-lpython3.11`.
 
-FlowPilot's `get_params(candidate, fingerprint, car_fw)` has no `experimental_long` / `alpha_long` argument, and its `CarParams` has no `experimentalLongitudinalAvailable` / `alphaLongitudinalAvailable` or `autoResumeSng`. This tree already has an alpha-longitudinal opt-in, used by Honda Bosch and Hyundai: `Params().get_bool("DisableRadar")` inside `get_params`. `flowinitd.py` deletes `DisableRadar` at every start unless `DisableRadar_Allow` is set, so it is off by default and needs two explicit settings. The Leaf uses the same toggle, and only when the heartbeat is in `fingerprint[2]`:
+Run: `cd leaf-gw && openpilot/check-forks.sh flowpilot`. No outer dev shell is needed; `fork.sh` enters `shell.nix` itself.
 
-```
-python common/params.py DisableRadar_Allow 1
-python common/params.py DisableRadar 1
-```
+## Things found in this tree and fixed in the patch
 
-**UI / Android layer:** no change is needed. The Java settings (`selfdrive/ui/java/ai.flow.app/SettingsScreen.java`) expose no `DisableRadar` toggle for any car (Honda and Hyundai have the same gap), and nothing on the Java side reads `openpilotLongitudinalControl`, `pcmCruise` or `safetyParam`. `boardd.cc` forwards `safetyParam` to panda as is. `pandad.py` reflashes `panda/board/obj/panda*.bin.signed` when the signature changes, so rebuilding the patched tree on the device is enough to get the new safety mode. A UI toggle would be a separate, optional feature.
+1. **Nissan `apply()` doesn't match `controlsd` (pre-existing; the Leaf could not run).**
+   - `controlsd.py` calls `CI.apply(CC, self.sm, now_nanos)`, and `nissan/carcontroller.py` takes `update(CC, sm, CS, now_nanos)`.
+   - But `nissan/interface.py` had `apply(self, c, now_nanos)` calling `CC.update(c, self.CS, now_nanos)`. That raises a TypeError either way. Toyota, GM, Honda and others have the same mismatch.
+   - The patch fixes Nissan only: `apply(self, c, sm, now_nanos=0)`, calling `CC.update(c, sm, self.CS, now_nanos)`. The default keeps the stale `test_car_interfaces` call `apply(CC, 0)` working; `sm` is unused by Nissan.
+   - Before the fix, `test_car_interfaces -k nissan` failed 5 of 5.
+2. **UI "System Unresponsive!" (phr00t lineage).**
+   - `OnRoadScreen.NoDebugMessagesWarning()` warns, with an immediate-warning sound, unless two kinds of UDP debug line (port 9000, via `common.logger.sLogger`) have each arrived within 500 ms: one starting with `"0"`, and one not.
+   - The non-`"0"` line comes from `lane_planner.py`. The `"0"` line is up to each car's carcontroller; Hyundai sends one every frame. Nissan sent none.
+   - The patch sends `"0nissan"` (lateral only) or `"0leaf-gw T<T> P<pressure>"` every 5th frame (100 ms at controlsd's 50 Hz). `test_ui_debug_line` checks it.
+3. **The vendored panda tests don't match the vendored opendbc (pre-existing; every Nissan panda test failed).**
+   - panda's `common.py` unpacks `make_can_msg` as `addr, dat, bus`, while this opendbc's packer returns `[addr, 0, dat, bus]`.
+   - `test_nissan.py` asks for `*_generated` DBCs that this opendbc doesn't have.
+   - The patch makes the unpack take `msg[0], msg[-2], msg[-1]` (one line, harmless for both shapes) and points `test_nissan.py` at `nissan_x_trail_2017` / `nissan_leaf_2018`.
 
-## Apply
+The test harness also needs one host-only shim, which lives in `fork.sh` and is not part of the patch. `common/path.py` hardcodes `BASEDIR` to `/data/data/ai.flow.android/files/app`, which `selfdrive/car` uses to discover brands. `fork.sh` loads a pytest plugin that points it at the worktree.
 
-```
-cd flowpilot                      # at 59f5cf3, submodules at the commits above
-git apply  /path/to/flowpilot/flowpilot-leaf-gw-long.patch
-git -C panda   apply /path/to/flowpilot/panda.patch
-git -C opendbc apply /path/to/flowpilot/opendbc.patch
-```
+## Opt-in: experimental longitudinal (default off)
 
-All three were checked with `git apply` on fresh worktrees at those commits.
+- `get_params(candidate, fingerprint, car_fw, experimental_long, docs)` receives `Params().get_bool("ExperimentalLongitudinalEnabled")` from `controlsd`. This is the same idiom as upstream's `alpha_long`, and Honda, Hyundai, VW, Ford and GM use it here too.
+- `controlsd` removes the param whenever `experimentalLongitudinalAvailable` is False. A drive started without the gateway heartbeat therefore clears the opt-in, and it must be set again. Upstream behaves the same with its alpha toggle.
+- **UI:** the Android settings (`SettingsScreen.java`) list "easy toggles" as display-name/param pairs, and there is no `ExperimentalLongitudinalEnabled` entry for any car. Enable it with `python common/params.py ExperimentalLongitudinalEnabled 1`. The UI is not changed, because this would expose it for every car. Adding `"Experimental Longitudinal (alpha)", "ExperimentalLongitudinalEnabled"` to `AdditionalToggles` would make it a toggle.
+- `DisableRadar` (the flowdriveai idiom) is not used.
 
-## Test environment (nix; leaf-gw/flake.nix not touched)
+**Fingerprint window:** `car_helpers.fingerprint` runs for at least `frame_fingerprint = 100` CAN frames (about 1 s). At 50 Hz, about 50 heartbeats arrive in that window, so missing it isn't a practical concern. If it is somehow missed, longitudinal isn't offered for that drive and the car runs lateral-only, which fails safe.
 
-`fork.sh` (the `check-forks.sh` hook) does all of the below: it adds the submodule worktrees, applies the patches, copies the spec in, and builds and runs the suites inside `shell.nix` (nixpkgs pinned to leaf-gw's `flake.lock` rev) with `SConstruct.test`. Run it as `openpilot/check-forks.sh flowpilot`. The manual recipe follows.
-
-The tree needs Cython 0.29 (`cython_0`; Cython 3 isn't tested). Everything else comes from current nixpkgs: Python 3.12.16, numpy 2.5.4, pycapnp 2.2.3, cffi 2.1.1, capnproto 1.5.0, clang 21, scons 4.10. `env.nix`:
-
-```nix
-let pkgs = import (builtins.getFlake "nixpkgs") {}; in with pkgs; {
-  inherit clang capnproto zeromq scons;
-  lmdb = lmdb.dev; lmdbOut = lmdb.out; usb = libusb1.dev;
-  py = python312.withPackages (ps: with ps; [ cython_0 numpy pycapnp cffi pytest parameterized
-         hypothesis tqdm pyyaml setuptools libusb1 requests pyzmq crcmod ]);
-}
-```
-
-Enter it with `nix shell --impure -f env.nix py clang capnproto zeromq lmdb lmdbOut scons`. The root `SConstruct` needs acados and other Android deps, so the test libs are built with a small out-of-tree `SConstruct.test`, copied to the repo root and run as `scons -f SConstruct.test`. It builds:
-
-- `common/params_pyx.so`: `params.cc` + `util.cc` + lmdb only, because `swaglog` needs json11, which isn't in nixpkgs and isn't needed here
-- `common/clock.so`
-- `common/kalman/simple_kalman_impl.so`
-- `opendbc/can/` (`libdbc`, `packer_pyx`, `parser_pyx`)
-- `cereal/SConscript` (for `messaging_pyx.so`)
-- `selfdrive/boardd/boardd_api_impl.so`
-
-Notes on that build:
-
-- `FP_INC` / `FP_LIB` point at the capnproto, zeromq, lmdb and libusb store paths. `FP_PY` is the env's python3, because the scons wrapper puts its own python 3.14 first on `PATH`.
-- `-include iterator` is needed because `opendbc/can/dbc.cc` uses `std::ostream_iterator` without the header, and gcc 16's libstdc++ no longer pulls it in.
-- `AddOption("--test")` is needed for `cereal/SConscript`.
-
-The panda test library is built directly:
-`cd panda/tests/safety && gcc -shared -fPIC -nostdlib -fno-builtin -std=gnu11 -I. -I../../board test.c -o libpandasafety.so`.
-
-Tests run with `PYTHONPATH=<root> HOME=/tmp/fphome` (Params lives in `$HOME/.flowdrive/params`):
-
-```
-python3 -m pytest -q panda/tests/safety/test_nissan.py
-python3 -m pytest -q panda/tests/safety/
-python3 -m pytest -q selfdrive/car/tests/test_car_interfaces.py [-k "NISSAN or nissan"]
-python3 -m pytest -q selfdrive/car/nissan/tests/
-cp ../leaf_gw_long.py ../test_leaf_gw_long.py selfdrive/car/nissan/ && (cd selfdrive/car/nissan && python3 test_leaf_gw_long.py)
-```
-
-The panda firmware was built with leaf-gw's `nix develop .#panda` (gcc-arm-embedded):
-`scons board/obj/panda.bin.signed board/obj/panda_h7.bin.signed`.
-
-## Results (fresh worktrees)
+## Results (nix `shell.nix`, fresh worktrees at `9ea918ea`)
 
 | suite | before | after |
 |---|---|---|
-| `panda/tests/safety/test_nissan.py` | 42 passed, 6 skipped | **70 passed, 9 skipped** (+28 in `TestNissanLeafLongSafety`) |
-| `panda/tests/safety/` (all modes) | 972 passed, 435 skipped | **1000 passed, 438 skipped** |
-| `test_car_interfaces.py -k nissan` | 5 passed | 5 passed |
-| `test_car_interfaces.py` (all) | 149 passed, 7 failed | 149 passed, 7 failed (the same 7 Chrysler/Jeep cases, which fail before the patch: `chrysler_pacifica_2017_hybrid` is a generated DBC that is not committed) |
-| `selfdrive/car/nissan/tests/` | n/a (new) | 10 passed, 2 skipped (spec absent); **12 passed** with `leaf_gw_long.py` copied in |
+| `panda/tests/safety/test_nissan.py` | 81 failed (DBC names and packer tuple) | **103 passed, 12 skipped** (+31 from `TestNissanLeafLongSafety`) |
+| `panda/tests/safety/` (all) | 1519 failed, 635 passed, 1010 skipped | 159 failed, 1889 passed, 1022 skipped (+128 subtests). The failures left are other brands' missing `*_generated` DBCs. The `common.py` fix alone gives 159 failed / 1858 passed. |
+| `test_car_interfaces.py -k nissan` | 5 failed (`apply` TypeError) | **5 passed** |
+| `test_car_interfaces.py` (all) | aborts (Hyundai `CarController.__init__`) | aborts the same way (pre-existing, not Nissan) |
+| `selfdrive/car/nissan/tests` | n/a (new) | 11 passed, 2 skipped (spec absent); **13 passed** with `leaf_gw_long.py` copied in |
 | `test_leaf_gw_long.py` | passes | passes |
-| panda F4 + H7 firmware (`-Werror`) | n/a | builds and signs |
+| panda F4 + H7 firmware (leaf-gw `.#panda` shell) | n/a | builds and signs. One test-only flag is needed, `-Wno-error=unterminated-string-initialization`, because `board/obj/gitversion.h` trips gcc 15; this is pre-existing and not in the patch. |
+
+`openpilot/check-forks.sh flowpilot` passes with no outer shell. From a scratch copy with `MAX_GAS` changed to 3414 in the patched panda test, it prints FAIL: 1 failed, 102 passed, 12 skipped.
 
 Checks that the new tests catch the code they guard:
 
-- New panda tests on the original `safety_nissan.h`: 13 fail.
-- Heartbeat removed from the LONG addr checks: `test_gateway_heartbeat_required` fails.
-- `0x2B0` decoded with the wrong nibble order: 3 fail.
-- `longitudinal_allowed` dropped from the `0x2B0` bound: 3 fail.
-- Packer missing the marker's aux = 2: 4 car tests fail, including both spec comparisons.
-- Heartbeat gate dropped from `interface.py`: `test_long_needs_gateway_heartbeat` fails.
+| change | failures |
+|---|---|
+| New panda tests on the original `safety_nissan.h` | 5 |
+| Heartbeat removed from the LONG rx checks | 1 (`test_leaf_gateway_heartbeat_required`) |
+| `0x2B0` decoded with the wrong nibble order | 3 |
+| Heartbeat gate in `interface.py` turned into `or` | 2 |
+| Debug line removed | 1 (`test_ui_debug_line`) |
 
-## Not run
+## phr00t/flowpilot master (`84f25d0`, 2024-06-09)
 
-- **`test_models.py` (nissan routes):** it downloads comma CI route logs and needs the full process stack.
-- **MISRA (`panda/tests/misra/test_misra.sh`):** it builds a pinned cppcheck from source, which was not done. The new C code follows the file's existing style (unsigned literals, no new casts).
-- **On-device Android build and HIL:** not available.
+The patch does **not** apply as is. The car side and DBC apply cleanly (`git apply --check --include='selfdrive/*' --include='opendbc/*'`). Every panda hunk fails, because jagheterfredrik replaced the vendored panda in its later commits ("pandaflash" through "finishing touches").
 
-## Deviations from the upstream patches
+phr00t's panda is the older generation: `AddrCheckStruct` / `addr_checks` rx checks, top-level `NISSAN_TX_MSGS`, and no `FLAG_NISSAN_*` in `panda/python`. It needs its own panda hunks. The car side would then work unchanged: it has the same `apply()` mismatch, `ExperimentalLongitudinalEnabled` and `sLogger` path. No suites were run there. No check-forks row was added; one would need that separate panda patch.
 
-- **Opt-in:** `Params().get_bool("DisableRadar")` replaces `alpha_long`. There is no `alphaLongitudinalAvailable` field, so availability shows only as the `openpilotLongitudinalControl` result.
-- **Car names:** `CAR.LEAF` / `CAR.LEAF_IC` replace `NISSAN_LEAF*`. `make_can_msg` lists replace `CanData`. `common.numpy_fast.clip` replaces `np.clip`. `stopAccel` is already -2.0 from `get_std_params`.
-- **Panda bounds:** the bounds are open-coded. They match `longitudinal_gas_checks` (`allowed && min<=x<=max` or `x == inactive`) and `longitudinal_brake_checks` (`x > max` or `!allowed && x != 0`).
-- **Heartbeat check:** it is an `AddrCheckStruct` (`expected_timestep` 20000 us; the heartbeat is 50 Hz). In this panda era, lag is only enforced by the 1 Hz `safety_tick` with a 1 s floor, so control drops 1 to 2 s after the heartbeat stops. Upstream behaves the same way.
-- **Panda safety tests:** LONG mode is a separate class, `TestNissanLeafLongSafety`. Upstream instead switched `TestNissanLeafSafety` itself to the LONG flag. Here both lateral-only and LONG Leafs stay covered.
-- **Fingerprint window (risk):** FlowPilot ends fingerprinting after about 10 CAN frames (about 0.1 s) once there is a single candidate. At 50 Hz about 5 heartbeats land in that window, so missing it takes a gateway that is late or dropping frames at startup. If it is missed, longitudinal is not enabled for that drive and the car runs lateral-only, which fails safe; restart to retry.
+## Deviations from upstream
+
+- **Opt-in:** `experimentalLongitudinalAvailable` / `experimental_long` (this tree's names) replace `alphaLongitudinalAvailable` / `alpha_long`.
+- **Old API idioms:**
+  - `CAR.LEAF` / `CAR.LEAF_IC` and `Panda.FLAG_NISSAN_LEAF_LONG` replace `NISSAN_LEAF*` and `NissanSafetyFlags`.
+  - `make_can_msg` lists replace `CanData`, and `common.numpy_fast` replaces `np`.
+- **Panda:** `GET_BYTE` replaces `msg->data`, `RxCheck` uses `.frequency`, and `CanMsg` has no `check_relay`.
+- **Extra fixes:** the three items under "Things found" are not in the upstream patches.
+- **Panda tests:** LONG mode is its own class, so lateral-only Leafs stay covered too. Upstream switched the Leaf class itself to LONG.
