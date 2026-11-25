@@ -16,6 +16,28 @@ So there is **no custom command frame** anymore; openpilot sends the real frames
 and panda bounds them like any other car (`longitudinal_gas_checks` /
 `longitudinal_brake_checks` + `LongitudinalLimits`).
 
+## Gateway heartbeat
+
+The gateway sends `0x5FF` on its V-CAN port at 10 Hz (`'L' 'G' 'W'`, version,
+status, counter, checksum; `LEAF_GW_HEARTBEAT` in the Leaf DBC). Two independent
+gates use it:
+
+- `interface.py`: `alphaLongitudinalAvailable` only if the heartbeat is in the
+  fingerprint on `LEAF_LONG_BUS`. No gateway at startup → no longitudinal toggle.
+- panda (`nissan.h`): in LONG mode the heartbeat is an rx check. If it stops for
+  ~1 s, the rx checks go invalid and `controls_allowed` drops.
+
+## Engagement
+
+`pcmCruise` stays True, as on Toyota and Honda Nidec openpilot longitudinal: you
+engage stock ProPILOT (ICC) as usual, panda keys `controls_allowed` off its cruise
+state (`0x30f`), and openpilot supplies the acceleration. With `pcmCruise = False`
+openpilot would cancel the stock cruise (`controlsd`: cancel when cruise is on and
+not `pcmCruise`) that panda needs, so it could never engage. Stock ICC keeps
+sending its own requests and the gateway arbitrates. At a stop, stock ICC's
+brake hold wins, so `autoResumeSng` stays off; resume with the stock button.
+`opendbc/car/nissan/tests/test_leaf_gw.py` (in the patch) pins this.
+
 ## Files
 
 - **`leaf_gw_long.py`** — dependency-free spec of the mapping + the two packers
@@ -50,10 +72,30 @@ python3 -m pytest opendbc/car/tests/test_car_interfaces.py -k nissan -q
 python3 -m pytest opendbc/safety/tests/test_nissan.py -q
 ```
 
-Verified against opendbc `c55bd39e` (master, 2026-11-22): the standalone test
+Verified against opendbc `341fb3d9` (master, 2026-11-24): the standalone test
 passes, all five nissan interfaces (incl. the fuzzed Leaf longitudinal
 `CarController.update()`) pass, and `pytest test_nissan.py` → 103 passed / 15
 skipped.
+
+## Forks (sunnypilot, StarPilot)
+
+The same design, ported per fork — each fork's nissan code has diverged enough that
+the upstream patches don't apply there:
+
+| fork | base | patches |
+|---|---|---|
+| openpilot (comma) | `commaai/opendbc` master `341fb3d9` | `*.patch` here |
+| sunnypilot | `sunnypilot/opendbc` master `11c61f3e` | [`sunnypilot/`](sunnypilot/README.md) |
+| StarPilot | `StarPilotHQ/StarPilot` `StarPilot` `0b2061d` (vendored `opendbc_repo/`) | [`starpilot/`](starpilot/README.md) |
+
+`check-forks.sh` applies each set to a fresh worktree at its pin and runs the
+nissan suites; `--latest` tries each fork's branch head instead, to catch drift
+before bumping a pin:
+
+```
+nix develop .#openpilot --command openpilot/check-forks.sh            # all, at pins
+nix develop .#openpilot --command openpilot/check-forks.sh --latest sunnypilot
+```
 
 ## The bus / frames (must match the firmware)
 

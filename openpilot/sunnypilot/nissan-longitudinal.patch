@@ -1,0 +1,377 @@
+diff --git a/opendbc/car/nissan/carcontroller.py b/opendbc/car/nissan/carcontroller.py
+index 20f3dab0..5adeeda6 100644
+--- a/opendbc/car/nissan/carcontroller.py
++++ b/opendbc/car/nissan/carcontroller.py
+@@ -10,6 +10,7 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
+ from opendbc.sunnypilot.car.nissan.icbm import IntelligentCruiseButtonManagementInterface
+ 
+ VisualAlert = structs.CarControl.HUDControl.VisualAlert
++LongCtrlState = structs.CarControl.Actuators.LongControlState
+ 
+ 
+ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterface):
+@@ -31,6 +32,34 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
+ 
+     can_sends = []
+ 
++    ### LONGITUDINAL ###
++    # openpilot emits the real Leaf ADAS frames (0x2B0 propulsion/regen, 0x1C3
++    # friction brake) on the leaf-gw control bus. It does NOT silence the stock
++    # ADAS ECU, so stock AEB stays live; the inline gateway re-emits these onto
++    # Chassis CAN and yields to a stronger stock request (magnitude arbitration).
++    if self.CP.openpilotLongitudinalControl and self.car_fingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC):
++      accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
++      stopping = actuators.longControlState == LongCtrlState.stopping
++      brake_mode = CC.longActive and (accel < CarControllerParams.PROPILOT_ACCEL_MIN or stopping)
++
++      if CC.longActive:
++        if brake_mode:
++          raw_accel = CarControllerParams.PROPILOT_BRAKE_RAW
++        else:
++          propulsion = float(np.clip(accel, CarControllerParams.PROPILOT_ACCEL_MIN, CarControllerParams.PROPILOT_ACCEL_MAX))
++          raw_accel = round(propulsion * CarControllerParams.PROPILOT_ACCEL_SCALE + CarControllerParams.PROPILOT_ACCEL_OFFSET)
++      else:
++        raw_accel = CarControllerParams.PROPILOT_INACTIVE_RAW
++
++      brake_pressure = round(max(0.0, -accel - 1.0) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
++      if stopping and CS.out.vEgo < self.CP.vEgoStopping:
++        brake_pressure = CarControllerParams.BRAKE_MAX
++      brake_pressure = int(np.clip(brake_pressure, 0, CarControllerParams.BRAKE_MAX))
++
++      can_sends.append(nissancan.create_accel_command(raw_accel, self.frame, CC.longActive))
++      can_sends.append(nissancan.create_brake_command(brake_pressure, self.frame,
++                                                      CC.longActive and brake_pressure > 0, brake_mode))
++
+     ### STEER ###
+     steer_hud_alert = 1 if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) else 0
+ 
+@@ -80,6 +109,8 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
+ 
+     new_actuators = actuators.as_builder()
+     new_actuators.steeringAngleDeg = self.apply_angle_last
++    if self.CP.openpilotLongitudinalControl:
++      new_actuators.accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
+ 
+     self.frame += 1
+     return new_actuators, can_sends
+diff --git a/opendbc/car/nissan/interface.py b/opendbc/car/nissan/interface.py
+index 6e096654..fffc1989 100644
+--- a/opendbc/car/nissan/interface.py
++++ b/opendbc/car/nissan/interface.py
+@@ -2,10 +2,17 @@ from opendbc.car import get_safety_config, structs
+ from opendbc.car.interfaces import CarInterfaceBase
+ from opendbc.car.nissan.carcontroller import CarController
+ from opendbc.car.nissan.carstate import CarState
+-from opendbc.car.nissan.values import CAR, NissanSafetyFlags
++from opendbc.car.nissan.nissancan import LEAF_GW_HEARTBEAT, LEAF_LONG_BUS
++from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
+ from opendbc.sunnypilot.car.nissan.values import NissanSafetyFlagsSP
+ 
+ class CarInterface(CarInterfaceBase):
++  @staticmethod
++  def get_pid_accel_limits(CP, CP_SP, current_speed, cruise_speed):
++    if CP.carFingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC) and CP.openpilotLongitudinalControl:
++      return CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX
++    return CarInterfaceBase.get_pid_accel_limits(CP, CP_SP, current_speed, cruise_speed)
++
+   CarState = CarState
+   CarController = CarController
+ 
+@@ -25,6 +32,21 @@ class CarInterface(CarInterfaceBase):
+     ret.steerControlType = structs.CarParams.SteerControlType.angle
+     ret.radarUnavailable = True
+ 
++    # Longitudinal via the inline leaf-gw Chassis CAN gateway (github.com/siigna/leaf-gw).
++    # openpilot emits the real 0x2B0/0x1C3 on the gateway's control bus; the
++    # gateway keeps the stock ADAS ECU live and preserves AEB by magnitude
++    # arbitration. No ECU takeover in init() -- that is the whole point.
++    # Offered only when the gateway's heartbeat is on its bus: without the gateway
++    # the frames reach nothing and stock ProPILOT would really be driving.
++    ret.alphaLongitudinalAvailable = (candidate in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC) and
++                                      LEAF_GW_HEARTBEAT in fingerprint[LEAF_LONG_BUS])
++    ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable
++    # pcmCruise stays True: stock ProPILOT ICC engagement (0x30f) gates openpilot and panda; openpilot supplies accel
++
++    if ret.openpilotLongitudinalControl:
++      ret.safetyConfigs[0].safetyParam |= NissanSafetyFlags.LONG_CONTROL.value
++      ret.stopAccel = -2.0
++
+     if candidate == CAR.NISSAN_ALTIMA:
+       # Altima has EPS on C-CAN unlike the others that have it on V-CAN
+       ret.safetyConfigs[0].safetyParam |= NissanSafetyFlags.ALT_EPS_BUS.value
+@@ -37,6 +59,7 @@ class CarInterface(CarInterfaceBase):
+     if candidate in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC):
+       ret.safetyParam |= NissanSafetyFlagsSP.LEAF
+ 
+-    ret.intelligentCruiseButtonManagementAvailable = candidate != CAR.NISSAN_ALTIMA
++    # ICBM spoofs cruise buttons; never alongside openpilot longitudinal
++    ret.intelligentCruiseButtonManagementAvailable = candidate != CAR.NISSAN_ALTIMA and not stock_cp.openpilotLongitudinalControl
+ 
+     return ret
+diff --git a/opendbc/car/nissan/nissancan.py b/opendbc/car/nissan/nissancan.py
+index 24a49e02..70d919c7 100644
+--- a/opendbc/car/nissan/nissancan.py
++++ b/opendbc/car/nissan/nissancan.py
+@@ -1,6 +1,14 @@
++from opendbc.car import CanData
+ from opendbc.car.crc import CRC8J1850, mk_crc8_fun
+ from opendbc.car.nissan.values import CAR
+ 
++# Bus the leaf-gw gateway taps to read these frames (V-CAN; the comma already
++# drives it for steering). Which V-CAN segment / panda bus is a bench check.
++LEAF_LONG_BUS = 2
++# The gateway's 10 Hz heartbeat on LEAF_LONG_BUS: longitudinal is offered only when
++# the fingerprint saw it, and panda drops control if it stops.
++LEAF_GW_HEARTBEAT = 0x5FF
++
+ # TODO: add this checksum to the CANPacker
+ nissan_checksum = mk_crc8_fun(CRC8J1850, init_crc=0x00, xor_out=0xFF)
+ 
+@@ -152,3 +160,36 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
+     values["HANDS_ON_WHEEL_WARNING"] = 1
+ 
+   return packer.make_can_msg("PROPILOT_HUD_INFO_MSG", 0, values)
++
++
++def create_accel_command(raw_command, frame, active):
++  """Leaf ADAS propulsion/regen request (0x2B0). leaf-gw re-stamps the counter
++  and re-emits it on Chassis CAN; openpilot only owns the command value."""
++  raw_command = int(raw_command)
++  # value nibbles: dat[1] = V_hi:V_lo, dat[2] = I_hi:V_mid, dat[0] = I, with I = ~V
++  raw12, fraction = divmod(raw_command, 4)
++  inverse = (~raw12) & 0xFFF
++  dat = bytes([
++    inverse & 0xFF,
++    (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
++    (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
++    0xAC,
++    0x5B if active else 0x1B,
++    0x00,
++    ((frame & 0xF) << 4) | 0xE,
++    (fraction << 2) | ((~fraction) & 0x3),
++  ])
++  return CanData(0x2B0, dat, LEAF_LONG_BUS)
++
++
++def create_brake_command(pressure, frame, active, brake_mode):
++  """Leaf ADAS friction-brake request (0x1C3), pressure in 0.5-count units."""
++  pressure = int(pressure)
++  dat = bytearray(8)
++  dat[0] = (pressure >> 4) & 0x3F
++  dat[1] = (pressure & 0xF) << 4
++  dat[4] = 0x64
++  dat[5] = (0x80 if active else 0) | (0x04 if brake_mode else 0) | (frame & 0x3)
++  dat[6] = 0xFF
++  dat[7] = (0x01 + 0xC3 + sum(dat[:7])) & 0xFF
++  return CanData(0x1C3, bytes(dat), LEAF_LONG_BUS)
+diff --git a/opendbc/car/nissan/values.py b/opendbc/car/nissan/values.py
+index 485655b7..2d87ec89 100644
+--- a/opendbc/car/nissan/values.py
++++ b/opendbc/car/nissan/values.py
+@@ -23,12 +23,27 @@ class CarControllerParams:
+   LKAS_MAX_TORQUE = 1               # A value of 1 is easy to overpower
+   STEER_THRESHOLD = 1.0
+ 
++  # 2025 Leaf ProPILOT longitudinal limits. The propulsion/regen request (0x2B0)
++  # has 2048 counts per m/s^2 about a 6144-count zero; friction braking (0x1C3)
++  # blends in below -1 m/s^2. From the StarPilot fork (2025 SV Plus).
++  ACCEL_MIN = -3.5
++  ACCEL_MAX = 2047 / 2048
++  PROPILOT_ACCEL_MIN = -1.0
++  PROPILOT_ACCEL_MAX = ACCEL_MAX
++  PROPILOT_ACCEL_OFFSET = 6144
++  PROPILOT_ACCEL_SCALE = 2048
++  PROPILOT_INACTIVE_RAW = 5260  # stock idle frame
++  PROPILOT_BRAKE_RAW = 2398     # stock friction-brake marker
++  BRAKE_MAX = 659
++  BRAKE_GAIN = 264.0
++
+   def __init__(self, CP):
+     pass
+ 
+ 
+ class NissanSafetyFlags(IntFlag):
+   ALT_EPS_BUS = 1
++  LONG_CONTROL = 2
+ 
+ 
+ class Footnote(Enum):
+diff --git a/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc b/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
+index 3376c378..72d7fe87 100644
+--- a/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
++++ b/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
+@@ -59,4 +59,14 @@ BO_ 1549 DOORS_LIGHTS: 8 XXX
+  SG_ DOOR_OPEN_RL : 5|1@0+ (1,0) [0|1] "" XXX
+  SG_ DOOR_OPEN_RR : 6|1@0+ (1,0) [0|1] "" XXX
+ 
++BO_ 1535 LEAF_GW_HEARTBEAT: 8 XXX
++ SG_ MAGIC : 7|24@0+ (1,0) [0|16777215] "" XXX
++ SG_ VERSION : 31|8@0+ (1,0) [0|255] "" XXX
++ SG_ INLINE : 32|1@0+ (1,0) [0|1] "" XXX
++ SG_ OP_ACTIVE : 33|1@0+ (1,0) [0|1] "" XXX
++ SG_ COUNTER : 43|4@0+ (1,0) [0|15] "" XXX
++ SG_ CHECKSUM : 63|8@0+ (1,0) [0|255] "" XXX
++
++CM_ BO_ 1535 "leaf-gw gateway heartbeat (github.com/siigna/leaf-gw), 10 Hz on the gateway's V-CAN bus: 'LGW' version status counter 0 checksum, checksum = (0xFF + sum bytes 0..6) & 0xFF";
++
+ VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;
+diff --git a/opendbc/sunnypilot/car/nissan/icbm.py b/opendbc/sunnypilot/car/nissan/icbm.py
+index d49ad6d5..6250b0ac 100644
+--- a/opendbc/sunnypilot/car/nissan/icbm.py
++++ b/opendbc/sunnypilot/car/nissan/icbm.py
+@@ -46,6 +46,8 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
+     self.ICBM = CC_SP.intelligentCruiseButtonManagement
+     self.frame = frame
+     self.last_button_frame = last_button_frame
++    # openpilot longitudinal owns speed; never spoof set/res then (ICBM is also unavailable)
++    send_req = SendButtonState.none if self.CP.openpilotLongitudinalControl else self.ICBM.sendButton
+ 
+     buttons = {b: CS.cruise_throttle_msg[b] for b in REPLAY_BUTTONS}
+     pressed = [b for b in REPLAY_BUTTONS if buttons[b] and not self.prev_buttons[b]]
+@@ -59,7 +61,7 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
+         send_button = "CANCEL_BUTTON"
+ 
+     else:
+-      if self.button_send_state == ButtonSendState.IDLE and (self.queued_buttons or self.ICBM.sendButton != SendButtonState.none):
++      if self.button_send_state == ButtonSendState.IDLE and (self.queued_buttons or send_req != SendButtonState.none):
+         self.button_send_state = ButtonSendState.RELEASE
+ 
+       if self.button_send_state != ButtonSendState.IDLE:
+@@ -69,8 +71,8 @@ class IntelligentCruiseButtonManagementInterface(IntelligentCruiseButtonManageme
+       if self.button_send_state == ButtonSendState.RELEASE:
+         send_button = "NO_BUTTON_PRESSED"
+         if (self.frame - self.last_button_frame) * DT_CTRL >= 0.06:
+-          if not self.queued_buttons and self.ICBM.sendButton != SendButtonState.none:
+-            self.queued_buttons.append(BUTTONS[self.ICBM.sendButton])
++          if not self.queued_buttons and send_req != SendButtonState.none:
++            self.queued_buttons.append(BUTTONS[send_req])
+           if self.queued_buttons:
+             self.button_send_state = ButtonSendState.PRESS
+             self.last_button_frame = self.frame
+diff --git a/opendbc/sunnypilot/car/nissan/test_nissan.py b/opendbc/sunnypilot/car/nissan/test_nissan.py
+new file mode 100644
+index 00000000..ff1e3f31
+--- /dev/null
++++ b/opendbc/sunnypilot/car/nissan/test_nissan.py
+@@ -0,0 +1,121 @@
++"""
++Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
++
++This file is part of sunnypilot and is licensed under the MIT License.
++See the LICENSE.md file in the root directory for more details.
++"""
++import unittest
++
++from opendbc.testing import parameterized
++
++from opendbc.can import CANParser
++
++from opendbc.car import gen_empty_fingerprint, structs
++from opendbc.car.car_helpers import interfaces
++from opendbc.car.nissan.nissancan import LEAF_GW_HEARTBEAT, LEAF_LONG_BUS, create_accel_command
++from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
++from opendbc.sunnypilot.car.nissan.values import NissanSafetyFlagsSP
++
++SendButtonState = structs.IntelligentCruiseButtonManagement.SendButtonState
++LEAFS = (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC)
++
++
++def get_interface(car_name, alpha_long, heartbeat_bus=LEAF_LONG_BUS):
++  fingerprint = gen_empty_fingerprint()
++  if heartbeat_bus is not None:
++    fingerprint[heartbeat_bus][LEAF_GW_HEARTBEAT] = 8
++  CarInterface = interfaces[car_name]
++  CP = CarInterface.get_params(car_name, fingerprint, [], alpha_long, False, False)
++  CP_SP = CarInterface.get_params_sp(CP, car_name, fingerprint, [], alpha_long, False, False)
++  return CarInterface(CP, CP_SP)
++
++
++def run(CI, CC, CC_SP, frames, cruise_enabled=True):
++  CC = CC.as_reader()
++  sends = []
++  for i in range(frames):
++    CI.update([])
++    CI.CS.out.cruiseState.enabled = cruise_enabled
++    _, can = CI.apply(CC, CC_SP, int(i * 1e7))
++    sends += can
++  return sends
++
++
++class TestNissanLeafLongitudinal(unittest.TestCase):
++
++  @parameterized("car_name, alpha_long", [(c, a) for c in CAR for a in (True, False)])
++  def test_params(self, car_name, alpha_long):
++    CI = get_interface(car_name, alpha_long)
++    CP, CP_SP = CI.CP, CI.CP_SP
++    is_leaf = car_name in LEAFS
++    long = is_leaf and alpha_long
++
++    self.assertEqual(CP.alphaLongitudinalAvailable, is_leaf)
++    self.assertEqual(CP.openpilotLongitudinalControl, long)
++    # stock ICC engagement gates openpilot longitudinal too
++    self.assertTrue(CP.pcmCruise)
++    self.assertFalse(CP.autoResumeSng)
++    self.assertEqual(bool(CP.safetyConfigs[0].safetyParam & NissanSafetyFlags.LONG_CONTROL), long)
++    self.assertEqual(bool(CP_SP.safetyParam & NissanSafetyFlagsSP.LEAF), is_leaf)
++    # ICBM spoofs cruise buttons: off with openpilot longitudinal, unchanged otherwise
++    self.assertEqual(CP_SP.intelligentCruiseButtonManagementAvailable, car_name != CAR.NISSAN_ALTIMA and not long)
++
++  @parameterized("car_name, heartbeat_bus", [(c, b) for c in LEAFS for b in (None, 0, 1)])
++  def test_long_needs_gateway_heartbeat(self, car_name, heartbeat_bus):
++    # heartbeat absent, or on the wrong bus: no longitudinal, no LONG flag, ICBM stays available
++    CI = get_interface(car_name, True, heartbeat_bus)
++    self.assertFalse(CI.CP.alphaLongitudinalAvailable)
++    self.assertFalse(CI.CP.openpilotLongitudinalControl)
++    self.assertFalse(CI.CP.safetyConfigs[0].safetyParam & NissanSafetyFlags.LONG_CONTROL)
++    self.assertTrue(CI.CP_SP.intelligentCruiseButtonManagementAvailable)
++
++  def test_accel_frames_match_stock(self):
++    # stock ZE1 frames (public route): idle, friction-brake marker, neutral
++    self.assertEqual(create_accel_command(CarControllerParams.PROPILOT_INACTIVE_RAW, 0, False).dat.hex(), "dc53a2ac1b000e03")
++    self.assertEqual(create_accel_command(CarControllerParams.PROPILOT_BRAKE_RAW, 0, True).dat.hex(), "a827d5ac5b000e09")
++    self.assertEqual(create_accel_command(6144, 0, True).dat.hex(), "ff6090ac5b000e03")
++
++  @parameterized("car_name", LEAFS)
++  def test_long_frames(self, car_name):
++    CI = get_interface(car_name, True)
++    CC = structs.CarControl(enabled=True, latActive=True, longActive=True)
++    CC.actuators.accel = 0.0
++    sends = run(CI, CC, structs.CarControlSP(), 1)
++    by_addr = {(addr, bus): dat for addr, dat, bus in sends}
++    # golden bytes from leaf_gw_long.pack_accel(6144, 0, True) / pack_brake(0, 0, False, False)
++    self.assertEqual(by_addr[(0x2b0, 2)], bytes([0xFF, 0x60, 0x90, 0xAC, 0x5B, 0x00, 0x0E, 0x03]))
++    self.assertEqual(by_addr[(0x1c3, 2)], bytes([0, 0, 0, 0, 0x64, 0, 0xFF, 0x27]))
++
++    CC.longActive = False
++    sends = run(CI, CC, structs.CarControlSP(), 1)
++    by_addr = {(addr, bus): dat for addr, dat, bus in sends}
++    # disengaged: the stock idle frame (counter nibble aside)
++    self.assertEqual(by_addr[(0x2b0, 2)].hex(), "dc53a2ac1b001e03")
++
++  @parameterized("car_name, alpha_long", [(c, a) for c in LEAFS for a in (True, False)])
++  def test_no_long_frames_without_long(self, car_name, alpha_long):
++    CI = get_interface(car_name, alpha_long)
++    CC = structs.CarControl(enabled=True, latActive=True, longActive=alpha_long)
++    addrs = {addr for addr, _, _ in run(CI, CC, structs.CarControlSP(), 4)}
++    self.assertEqual({0x2b0, 0x1c3} & addrs, {0x2b0, 0x1c3} if alpha_long else set())
++
++  @parameterized("car_name, alpha_long", [(c, a) for c in LEAFS for a in (True, False)])
++  def test_icbm_buttons(self, car_name, alpha_long):
++    # an ICBM request must never become a spoofed SET/RES press under openpilot longitudinal
++    CI = get_interface(car_name, alpha_long)
++    CC = structs.CarControl(enabled=True, latActive=True, longActive=alpha_long)
++    CC_SP = structs.CarControlSP()
++    CC_SP.intelligentCruiseButtonManagement.sendButton = SendButtonState.increase
++    sends = [(addr, dat, bus) for addr, dat, bus in run(CI, CC, CC_SP, 50) if addr == 0x239 and bus == 2]
++    self.assertTrue(sends)
++
++    cp = CANParser("nissan_leaf_2018_generated", [("CRUISE_THROTTLE", 0)], 2)
++    res_pressed = False
++    for i, s in enumerate(sends):
++      cp.update([(int(i * 2e7), [s])])
++      res_pressed |= any(cp.vl_all["CRUISE_THROTTLE"]["RES_BUTTON"])
++    self.assertEqual(res_pressed, not alpha_long)
++
++
++if __name__ == "__main__":
++  unittest.main()

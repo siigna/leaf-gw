@@ -117,12 +117,16 @@
         # Run the opendbc car-port and panda-safety patches' test suites.
         # opendbc needs Python < 3.13 (pycapnp); libsafety builds with cc + cffi.
         openpilot = pkgs.mkShell {
+          # libsafety builds at -O0 -Werror; nix's _FORTIFY_SOURCE would make that fail.
+          hardeningDisable = [ "fortify" ];
           packages = [
             pkgs.gcc
             (pkgs.python312.withPackages (ps: with ps; [
               numpy pycapnp cffi pytest hypothesis parameterized
               tqdm pytest-subtests pytest-xdist pycryptodome
+              crcmod smbus2 pyzmq   # StarPilot's opendbc imports openpilot.system.hardware
             ]))
+            pkgs.scons   # StarPilot's opendbc builds libsafety with it; after python so 3.12 wins on PATH
           ];
         };
       });

@@ -11,7 +11,7 @@ index 26c1387b..0cf70923 100644
    bool subaru_gen2;
    bool subaru_pg_reversed_driver_torque;
 diff --git a/opendbc/safety/modes/nissan.h b/opendbc/safety/modes/nissan.h
-index a2fda838..419af8cb 100644
+index a2fda838..61cd672d 100644
 --- a/opendbc/safety/modes/nissan.h
 +++ b/opendbc/safety/modes/nissan.h
 @@ -67,6 +67,18 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
@@ -25,21 +25,22 @@ index a2fda838..419af8cb 100644
 +#define NISSAN_GW_BUS 2
 +const LongitudinalLimits NISSAN_LONG_LIMITS = {
 +  .max_gas = 8191,       // 0x2B0 raw command ceiling (12-bit)
-+  .min_gas = 2518,       // PROPILOT_BRAKE_RAW (strongest decel request)
-+  .inactive_gas = 5320,  // PROPILOT_INACTIVE_RAW (sent when not engaged)
++  .min_gas = 2398,       // PROPILOT_BRAKE_RAW (stock friction-brake marker)
++  .inactive_gas = 5260,  // PROPILOT_INACTIVE_RAW (stock idle frame)
 +  .max_brake = 659,      // 0x1C3 pressure ceiling (0.5-count units)
 +};
 +
  static bool nissan_tx_hook(const CANPacket_t *msg) {
    bool tx = true;
    bool violation = false;
-@@ -95,6 +107,23 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
+@@ -95,6 +107,24 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
      violation = (msg->data[1] & 0x3dU) > 0U;
    }
  
 +  // leaf-gw propulsion/regen request (0x2B0)
 +  if (msg->addr == 0x2b0U) {
-+    int raw12 = (msg->data[1] << 4) | (msg->data[2] & 0x0FU);
++    // 12-bit value: data[1] = V_hi:V_lo, data[2] low nibble = V_mid
++    int raw12 = ((msg->data[1] >> 4) << 8) | ((msg->data[2] & 0x0FU) << 4) | (msg->data[1] & 0x0FU);
 +    int command = (raw12 << 2) | ((msg->data[7] >> 2) & 0x03U);
 +    if (longitudinal_gas_checks(command, NISSAN_LONG_LIMITS)) {
 +      violation = true;
@@ -57,7 +58,7 @@ index a2fda838..419af8cb 100644
    if (violation) {
      tx = false;
    }
-@@ -112,6 +141,18 @@ static safety_config nissan_init(uint16_t param) {
+@@ -112,6 +142,18 @@ static safety_config nissan_init(uint16_t param) {
      {0x280, 2, 8, .check_relay = true},   // CANCEL_MSG (Leaf)
    };
  
@@ -76,8 +77,27 @@ index a2fda838..419af8cb 100644
    // Signals duplicated below due to the fact that these messages can come in on either CAN bus, depending on car model.
    static const RxCheck nissan_rx_checks[] = {
      {.msg = {{0x185, 0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // STEER_TORQUE_SENSOR
-@@ -129,9 +170,19 @@ static safety_config nissan_init(uint16_t param) {
+@@ -127,11 +169,39 @@ static safety_config nissan_init(uint16_t param) {
+              {0x1cc, 0, 4, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},  // DOORS_LIGHTS / BRAKE
+   };
  
++  // Leaf longitudinal also requires the leaf-gw heartbeat (0x5FF, 10 Hz) on the
++  // gateway bus: no gateway installed or alive -> rx checks fail -> no control.
++  static const RxCheck nissan_leaf_long_rx_checks[] = {
++    {.msg = {{0x185, 0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // STEER_TORQUE_SENSOR
++    {.msg = {{0x285, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
++             {0x285, 1, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }}},  // WHEEL_SPEEDS_REAR
++    {.msg = {{0x30f, 2, 3, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
++             {0x30f, 1, 3, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }}},  // CRUISE_STATE
++    {.msg = {{0x15c, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
++             {0x15c, 1, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
++             {0x239, 0, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},  // GAS_PEDAL
++    {.msg = {{0x454, 0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
++             {0x454, 1, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
++             {0x1cc, 0, 4, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},  // DOORS_LIGHTS / BRAKE
++    {.msg = {{0x5ff, NISSAN_GW_BUS, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // LEAF_GW_HEARTBEAT
++  };
++
    // EPS Location. false = V-CAN, true = C-CAN
    const uint16_t NISSAN_PARAM_ALT_EPS_BUS = 1;
 +  const uint16_t NISSAN_PARAM_LEAF_LONG = 2;
@@ -89,16 +109,17 @@ index a2fda838..419af8cb 100644
 +  safety_config ret;
 +  if (safety_setup.nissan_leaf_long) {
 +    SET_TX_MSGS(NISSAN_LEAF_LONG_TX_MSGS, ret);
++    SET_RX_CHECKS(nissan_leaf_long_rx_checks, ret);
 +  } else {
 +    SET_TX_MSGS(NISSAN_TX_MSGS, ret);
++    SET_RX_CHECKS(nissan_rx_checks, ret);
 +  }
-+  SET_RX_CHECKS(nissan_rx_checks, ret);
 +  return ret;
  }
  
  static const safety_hooks nissan_hooks = {
 diff --git a/opendbc/safety/tests/test_nissan.py b/opendbc/safety/tests/test_nissan.py
-index b80cbe7d..11b1dbf3 100755
+index b80cbe7d..7bb385ad 100755
 --- a/opendbc/safety/tests/test_nissan.py
 +++ b/opendbc/safety/tests/test_nissan.py
 @@ -4,6 +4,7 @@ import unittest
@@ -127,13 +148,13 @@ index b80cbe7d..11b1dbf3 100755
 +  # mirrors CarControllerParams / modes/nissan.h NISSAN_LONG_LIMITS
 +  GW_BUS = 2
 +  MAX_GAS = 8191
-+  MIN_GAS = 2518
-+  INACTIVE_GAS = 5320
++  MIN_GAS = 2398
++  INACTIVE_GAS = 5260
 +  MAX_BRAKE = 659
  
    def _user_brake_msg(self, brake):
      values = {"USER_BRAKE_PRESSED": brake}
-@@ -107,6 +123,58 @@ class TestNissanLeafSafety(TestNissanSafety):
+@@ -107,6 +123,88 @@ class TestNissanLeafSafety(TestNissanSafety):
    def test_acc_buttons(self):
      pass
  
@@ -142,9 +163,9 @@ index b80cbe7d..11b1dbf3 100755
 +    raw12, fraction = divmod(raw_command, 4)
 +    inverse = (~raw12) & 0xFFF
 +    dat = bytes([
-+      ((inverse & 0xF) << 4) | ((inverse >> 4) & 0xF),
-+      (raw12 >> 4) & 0xFF,
-+      (((inverse >> 8) & 0xF) << 4) | (raw12 & 0xF),
++      inverse & 0xFF,
++      (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
++      (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
 +      0xAC, 0x5B if active else 0x1B, 0x00, 0x0E,
 +      (fraction << 2) | ((~fraction) & 0x3),
 +    ])
@@ -181,6 +202,36 @@ index b80cbe7d..11b1dbf3 100755
 +    self.assertFalse(self._tx(self._accel_msg(7000)))
 +    self.assertFalse(self._tx(self._accel_msg(self.MIN_GAS)))
 +    self.assertFalse(self._tx(self._brake_msg(200)))
++
++  def _heartbeat_msg(self, counter=0):
++    dat = bytearray(b"LGW\x01\x01") + bytes([counter & 0xF, 0])
++    return make_msg(self.GW_BUS, 0x5ff, 8, bytes(dat) + bytes([(0xFF + sum(dat)) & 0xFF]))
++
++  def test_leaf_stock_frames(self):
++    # golden stock ZE1 frames decode to the limits: idle == inactive, brake marker == min
++    self.safety.set_controls_allowed(False)
++    self.assertTrue(self._tx(make_msg(self.GW_BUS, 0x2b0, 8, bytes.fromhex("dc53a2ac1b000e03"))))
++    self.safety.set_controls_allowed(True)
++    self.assertTrue(self._tx(make_msg(self.GW_BUS, 0x2b0, 8, bytes.fromhex("a827d5ac5b000e09"))))
++
++  def _rx_seen(self):
++    return [self.safety.safety_a.state.rx_status[i].msg_seen for i in range(self.safety.get_rx_checks_len())]
++
++  def test_leaf_gateway_heartbeat_required(self):
++    # long mode monitors the heartbeat as an rx check: if it stops, panda's rx checks
++    # go invalid and controls_allowed drops, so no gateway -> no longitudinal
++    before = self._rx_seen()
++    self.assertTrue(self._rx(self._heartbeat_msg()))
++    after = self._rx_seen()
++    self.assertEqual(sum(after) - sum(before), 1)
++    # ... only on the gateway bus
++    self.safety.set_safety_hooks(CarParams.SafetyModel.nissan, self.SAFETY_PARAM)
++    self._rx(make_msg(0, 0x5ff, 8, bytes(8)))
++    self.assertEqual(sum(self._rx_seen()), 0)
++    # ... and not at all without the LONG flag (lateral-only Leafs need no gateway)
++    self.safety.set_safety_hooks(CarParams.SafetyModel.nissan, 0)
++    self._rx(self._heartbeat_msg())
++    self.assertEqual(sum(self._rx_seen()), 0)
 +
 +  def test_leaf_gas_pressed_blocks(self):
 +    # driver on the accelerator -> longitudinal not allowed even if engaged

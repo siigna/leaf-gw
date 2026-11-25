@@ -11,9 +11,9 @@ import leaf_gw_long as L
 def dec_2b0(d):
   assert (d[4] & 0xBF) == 0x1B, "0x2B0 ownership/active byte"
   assert d[3] == 0xAC and d[5] == 0 and (d[6] & 0x0F) == 0x0E, "0x2B0 fixed bytes"
-  raw12 = (d[1] << 4) | (d[2] & 0x0F)
+  raw12 = ((d[1] >> 4) << 8) | ((d[2] & 0x0F) << 4) | (d[1] & 0x0F)
   frac = (d[7] >> 2) & 0x03
-  inverse = ((d[2] >> 4) << 8) | ((d[0] & 0x0F) << 4) | (d[0] >> 4)
+  inverse = ((d[2] >> 4) << 8) | d[0]
   assert inverse == ((~raw12) & 0xFFF), "0x2B0 inverse copy"
   assert d[7] == (((frac << 2) | ((~frac) & 0x3)) & 0xFF), "0x2B0 fraction check"
   command = raw12 * 4 + frac
@@ -45,6 +45,16 @@ def main():
   assert L.gateway_longitudinal(0.0, False, False, 10.0)[0] == L.PROPILOT_INACTIVE_RAW
   assert L.gateway_longitudinal(-2.0, True, False, 10.0)[0] == L.PROPILOT_BRAKE_RAW
   assert L.gateway_longitudinal(-9.0, True, False, 10.0)[1] == L.BRAKE_MAX  # clamp
+
+  # stock frames (golden): idle, brake marker, neutral
+  assert L.pack_accel(L.PROPILOT_INACTIVE_RAW, 0, False).hex() == "dc53a2ac1b000e03"
+  assert L.pack_accel(L.PROPILOT_BRAKE_RAW, 0, True).hex() == "a827d5ac5b000e09"
+  assert L.pack_accel(6144, 0, True).hex() == "ff6090ac5b000e03"
+  # two consecutive stock frames from a public ZE1 route are one count apart
+  assert dec_2b0(bytes.fromhex("f05fa0ac5b000e09"))[0] + 3 == dec_2b0(bytes.fromhex("ef50a1ac5b001e06"))[0]
+  # heartbeat
+  hb = bytes([0x4C, 0x47, 0x57, 1, 3, 5, 0, 0xF2])
+  assert L.heartbeat_valid(hb) and not L.heartbeat_valid(hb[:7] + b"\x00")
 
   # pack -> decode round-trip across the whole range; frames must be gateway-valid
   for accel, la, stop, v, ves in sweep():

@@ -1,5 +1,5 @@
 diff --git a/opendbc/car/nissan/carcontroller.py b/opendbc/car/nissan/carcontroller.py
-index 42f693a2..e2443699 100644
+index 42f693a2..a1350b5c 100644
 --- a/opendbc/car/nissan/carcontroller.py
 +++ b/opendbc/car/nissan/carcontroller.py
 @@ -8,6 +8,7 @@ from opendbc.car.nissan.values import CAR, CarControllerParams
@@ -55,14 +55,15 @@ index 42f693a2..e2443699 100644
      self.frame += 1
      return new_actuators, can_sends
 diff --git a/opendbc/car/nissan/interface.py b/opendbc/car/nissan/interface.py
-index 8253d484..15bf1947 100644
+index 8253d484..67488722 100644
 --- a/opendbc/car/nissan/interface.py
 +++ b/opendbc/car/nissan/interface.py
-@@ -2,9 +2,15 @@ from opendbc.car import get_safety_config, structs
+@@ -2,9 +2,16 @@ from opendbc.car import get_safety_config, structs
  from opendbc.car.interfaces import CarInterfaceBase
  from opendbc.car.nissan.carcontroller import CarController
  from opendbc.car.nissan.carstate import CarState
 -from opendbc.car.nissan.values import CAR, NissanSafetyFlags
++from opendbc.car.nissan.nissancan import LEAF_GW_HEARTBEAT, LEAF_LONG_BUS
 +from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
  
  class CarInterface(CarInterfaceBase):
@@ -75,7 +76,7 @@ index 8253d484..15bf1947 100644
    CarState = CarState
    CarController = CarController
  
-@@ -24,6 +30,19 @@ class CarInterface(CarInterfaceBase):
+@@ -24,6 +31,23 @@ class CarInterface(CarInterfaceBase):
      ret.steerControlType = structs.CarParams.SteerControlType.angle
      ret.radarUnavailable = True
  
@@ -83,23 +84,27 @@ index 8253d484..15bf1947 100644
 +    # openpilot emits the real 0x2B0/0x1C3 on the gateway's control bus; the
 +    # gateway keeps the stock ADAS ECU live and preserves AEB by magnitude
 +    # arbitration. No ECU takeover in init() -- that is the whole point.
-+    ret.alphaLongitudinalAvailable = candidate in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC)
++    # Offered only when the gateway's heartbeat is on its bus: without the gateway
++    # the frames reach nothing and stock ProPILOT would really be driving.
++    ret.alphaLongitudinalAvailable = (candidate in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC) and
++                                      LEAF_GW_HEARTBEAT in fingerprint[LEAF_LONG_BUS])
 +    ret.openpilotLongitudinalControl = alpha_long and ret.alphaLongitudinalAvailable
-+    ret.pcmCruise = not ret.openpilotLongitudinalControl
++    # pcmCruise stays True (as Toyota / Honda Nidec): stock ProPILOT engagement gates
++    # control and panda keys controls_allowed off it; openpilot supplies the accel.
++    # pcmCruise=False would make openpilot cancel the very cruise panda needs.
 +
 +    if ret.openpilotLongitudinalControl:
 +      ret.safetyConfigs[0].safetyParam |= NissanSafetyFlags.LONG_CONTROL.value
-+      ret.autoResumeSng = True
 +      ret.stopAccel = -2.0
 +
      if candidate == CAR.NISSAN_ALTIMA:
        # Altima has EPS on C-CAN unlike the others that have it on V-CAN
        ret.safetyConfigs[0].safetyParam |= NissanSafetyFlags.ALT_EPS_BUS.value
 diff --git a/opendbc/car/nissan/nissancan.py b/opendbc/car/nissan/nissancan.py
-index 24a49e02..cf40d784 100644
+index 24a49e02..70d919c7 100644
 --- a/opendbc/car/nissan/nissancan.py
 +++ b/opendbc/car/nissan/nissancan.py
-@@ -1,6 +1,11 @@
+@@ -1,6 +1,14 @@
 +from opendbc.car import CanData
  from opendbc.car.crc import CRC8J1850, mk_crc8_fun
  from opendbc.car.nissan.values import CAR
@@ -107,11 +112,14 @@ index 24a49e02..cf40d784 100644
 +# Bus the leaf-gw gateway taps to read these frames (V-CAN; the comma already
 +# drives it for steering). Which V-CAN segment / panda bus is a bench check.
 +LEAF_LONG_BUS = 2
++# The gateway's 10 Hz heartbeat on LEAF_LONG_BUS: longitudinal is offered only when
++# the fingerprint saw it, and panda drops control if it stops.
++LEAF_GW_HEARTBEAT = 0x5FF
 +
  # TODO: add this checksum to the CANPacker
  nissan_checksum = mk_crc8_fun(CRC8J1850, init_crc=0x00, xor_out=0xFF)
  
-@@ -152,3 +157,35 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
+@@ -152,3 +160,36 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
      values["HANDS_ON_WHEEL_WARNING"] = 1
  
    return packer.make_can_msg("PROPILOT_HUD_INFO_MSG", 0, values)
@@ -121,12 +129,13 @@ index 24a49e02..cf40d784 100644
 +  """Leaf ADAS propulsion/regen request (0x2B0). leaf-gw re-stamps the counter
 +  and re-emits it on Chassis CAN; openpilot only owns the command value."""
 +  raw_command = int(raw_command)
++  # value nibbles: dat[1] = V_hi:V_lo, dat[2] = I_hi:V_mid, dat[0] = I, with I = ~V
 +  raw12, fraction = divmod(raw_command, 4)
 +  inverse = (~raw12) & 0xFFF
 +  dat = bytes([
-+    ((inverse & 0xF) << 4) | ((inverse >> 4) & 0xF),
-+    (raw12 >> 4) & 0xFF,
-+    (((inverse >> 8) & 0xF) << 4) | (raw12 & 0xF),
++    inverse & 0xFF,
++    (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
++    (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
 +    0xAC,
 +    0x5B if active else 0x1B,
 +    0x00,
@@ -147,8 +156,72 @@ index 24a49e02..cf40d784 100644
 +  dat[6] = 0xFF
 +  dat[7] = (0x01 + 0xC3 + sum(dat[:7])) & 0xFF
 +  return CanData(0x1C3, bytes(dat), LEAF_LONG_BUS)
+diff --git a/opendbc/car/nissan/tests/test_leaf_gw.py b/opendbc/car/nissan/tests/test_leaf_gw.py
+new file mode 100644
+index 00000000..13980213
+--- /dev/null
++++ b/opendbc/car/nissan/tests/test_leaf_gw.py
+@@ -0,0 +1,58 @@
++from opendbc.car import gen_empty_fingerprint
++from opendbc.car.nissan.interface import CarInterface
++from opendbc.car.nissan.nissancan import LEAF_GW_HEARTBEAT, LEAF_LONG_BUS, create_accel_command
++from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
++
++
++def _fp(gateway=True):
++  fp = gen_empty_fingerprint()
++  if gateway:
++    fp[LEAF_LONG_BUS][LEAF_GW_HEARTBEAT] = 8
++  return fp
++
++
++def test_leaf_gateway_long_keeps_pcm_cruise():
++  # openpilot cancels stock cruise when pcmCruise is False, and panda only allows
++  # control while stock cruise is engaged -- so gateway long must keep pcmCruise.
++  for car in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC):
++    CP = CarInterface.get_params(car, _fp(), [], True, False, False)
++    assert CP.openpilotLongitudinalControl
++    assert CP.pcmCruise
++    assert CP.safetyConfigs[0].safetyParam & NissanSafetyFlags.LONG_CONTROL.value
++
++
++def test_leaf_long_off_without_alpha_toggle():
++  CP = CarInterface.get_params(CAR.NISSAN_LEAF, _fp(), [], False, False, False)
++  assert not CP.openpilotLongitudinalControl
++  assert not CP.safetyConfigs[0].safetyParam & NissanSafetyFlags.LONG_CONTROL.value
++
++
++def test_leaf_long_needs_gateway_heartbeat():
++  for fp in (_fp(gateway=False), {**_fp(gateway=False), 0: {LEAF_GW_HEARTBEAT: 8}}):  # absent, or wrong bus
++    CP = CarInterface.get_params(CAR.NISSAN_LEAF, fp, [], True, False, False)
++    assert not CP.alphaLongitudinalAvailable
++    assert not CP.openpilotLongitudinalControl
++    assert not CP.safetyConfigs[0].safetyParam & NissanSafetyFlags.LONG_CONTROL.value
++
++
++def test_leaf_accel_frames_match_stock():
++  # stock ZE1 frames (public route): idle, friction-brake marker, neutral
++  assert create_accel_command(CarControllerParams.PROPILOT_INACTIVE_RAW, 0, False).dat.hex() == "dc53a2ac1b000e03"
++  assert create_accel_command(CarControllerParams.PROPILOT_BRAKE_RAW, 0, True).dat.hex() == "a827d5ac5b000e09"
++  assert create_accel_command(6144, 0, True).dat.hex() == "ff6090ac5b000e03"
++
++
++def test_leaf_long_controller_emits_frames():
++  # what test_car_interfaces did before the heartbeat gate made its random fingerprints miss long
++  from opendbc.car import DT_CTRL, structs
++  CI = CarInterface(CarInterface.get_params(CAR.NISSAN_LEAF, _fp(), [], True, False, False))
++  CC = structs.CarControl()
++  CC.enabled = CC.latActive = CC.longActive = True
++  CC.actuators.accel = -2.5
++  now, sent = 0, []
++  for _ in range(20):
++    CI.update([])
++    _, can_sends = CI.apply(CC.as_reader(), now)
++    sent += [(m[0], m[2]) for m in can_sends]  # CanData(address, dat, src)
++    now += int(DT_CTRL * 1e9)
++  assert (0x2B0, LEAF_LONG_BUS) in sent and (0x1C3, LEAF_LONG_BUS) in sent
 diff --git a/opendbc/car/nissan/values.py b/opendbc/car/nissan/values.py
-index 7d6e48a3..bcd4bfd3 100644
+index 7d6e48a3..73ec58c0 100644
 --- a/opendbc/car/nissan/values.py
 +++ b/opendbc/car/nissan/values.py
 @@ -23,12 +23,27 @@ class CarControllerParams:
@@ -164,8 +237,8 @@ index 7d6e48a3..bcd4bfd3 100644
 +  PROPILOT_ACCEL_MAX = ACCEL_MAX
 +  PROPILOT_ACCEL_OFFSET = 6144
 +  PROPILOT_ACCEL_SCALE = 2048
-+  PROPILOT_INACTIVE_RAW = 5320
-+  PROPILOT_BRAKE_RAW = 2518
++  PROPILOT_INACTIVE_RAW = 5260  # stock idle frame
++  PROPILOT_BRAKE_RAW = 2398     # stock friction-brake marker
 +  BRAKE_MAX = 659
 +  BRAKE_GAIN = 264.0
 +
@@ -179,3 +252,22 @@ index 7d6e48a3..bcd4bfd3 100644
  
  
  class Footnote(Enum):
+diff --git a/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc b/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
+index 3376c378..72d7fe87 100644
+--- a/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
++++ b/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
+@@ -59,4 +59,14 @@ BO_ 1549 DOORS_LIGHTS: 8 XXX
+  SG_ DOOR_OPEN_RL : 5|1@0+ (1,0) [0|1] "" XXX
+  SG_ DOOR_OPEN_RR : 6|1@0+ (1,0) [0|1] "" XXX
+ 
++BO_ 1535 LEAF_GW_HEARTBEAT: 8 XXX
++ SG_ MAGIC : 7|24@0+ (1,0) [0|16777215] "" XXX
++ SG_ VERSION : 31|8@0+ (1,0) [0|255] "" XXX
++ SG_ INLINE : 32|1@0+ (1,0) [0|1] "" XXX
++ SG_ OP_ACTIVE : 33|1@0+ (1,0) [0|1] "" XXX
++ SG_ COUNTER : 43|4@0+ (1,0) [0|15] "" XXX
++ SG_ CHECKSUM : 63|8@0+ (1,0) [0|255] "" XXX
++
++CM_ BO_ 1535 "leaf-gw gateway heartbeat (github.com/siigna/leaf-gw), 10 Hz on the gateway's V-CAN bus: 'LGW' version status counter 0 checksum, checksum = (0xFF + sum bytes 0..6) & 0xFF";
++
+ VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;
