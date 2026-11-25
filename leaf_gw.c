@@ -46,8 +46,14 @@ void leaf_1c3_encode(uint8_t d[8], int pressure, bool active, bool brake_mode, u
 
 /* ---------- 0x2B0 propulsion/regen ---------- */
 
+/* 12-bit value V, nibbles spread as b1 = V_hi:V_lo, b2 = I_hi:V_mid, b0 = I_mid:I_lo
+ * with I = ~V. (StarPilot's packer swaps V_mid/V_lo; a stock ZE1 log rules that out:
+ * this order is smooth, theirs jumps.) */
 static int b2b0_raw(const uint8_t d[8]) {
-    return (d[1] << 4) | (d[2] & 0x0F);
+    return ((d[1] >> 4) << 8) | ((d[2] & 0x0F) << 4) | (d[1] & 0x0F);
+}
+static int b2b0_inverse(const uint8_t d[8]) {
+    return ((d[2] >> 4) << 8) | d[0];
 }
 static int b2b0_frac(const uint8_t d[8]) {
     return (d[7] >> 2) & 0x03;
@@ -66,9 +72,7 @@ float leaf_2b0_accel(const uint8_t d[8]) {
 }
 
 bool leaf_2b0_valid(const uint8_t d[8]) {
-    int raw = b2b0_raw(d);
-    int inverse = ((d[2] >> 4) << 8) | ((d[0] & 0x0F) << 4) | (d[0] >> 4);
-    if (inverse != ((~raw) & 0xFFF)) return false;
+    if (b2b0_inverse(d) != ((~b2b0_raw(d)) & 0xFFF)) return false;
     int frac = b2b0_frac(d);
     if (d[7] != (uint8_t)(((frac << 2) | ((~frac) & 0x3)) & 0xFF)) return false;
     if (d[3] != 0xAC) return false;
@@ -84,15 +88,34 @@ void leaf_2b0_encode(uint8_t d[8], int command, bool active, uint8_t counter) {
     int raw = command >> 2;
     int frac = command & 0x03;
     int inverse = (~raw) & 0xFFF;
-    d[1] = (uint8_t)((raw >> 4) & 0xFF);
-    d[2] = (uint8_t)((((inverse >> 8) & 0x0F) << 4) | (raw & 0x0F));
-    uint8_t y = (uint8_t)(inverse & 0xFF);
-    d[0] = (uint8_t)(((y & 0x0F) << 4) | (y >> 4));   /* nibble swap */
+    d[0] = (uint8_t)(inverse & 0xFF);
+    d[1] = (uint8_t)((((raw >> 8) & 0x0F) << 4) | (raw & 0x0F));
+    d[2] = (uint8_t)((((inverse >> 8) & 0x0F) << 4) | ((raw >> 4) & 0x0F));
     d[3] = 0xAC;
     d[4] = active ? 0x5B : 0x1B;
     d[5] = 0;
     d[6] = (uint8_t)(0x0E | ((counter & 0x0F) << 4));
     d[7] = (uint8_t)(((frac << 2) | ((~frac) & 0x3)) & 0xFF);
+}
+
+/* ---------- gateway heartbeat (0x5FF, gateway -> openpilot) ---------- */
+
+void leaf_hb_encode(uint8_t d[8], uint8_t status, uint8_t counter) {
+    d[0] = 'L'; d[1] = 'G'; d[2] = 'W';
+    d[3] = LEAF_HB_VERSION;
+    d[4] = status;
+    d[5] = (uint8_t)(counter & 0x0F);
+    d[6] = 0;
+    unsigned sum = 0xFFu;
+    for (int i = 0; i < 7; i++) sum += d[i];
+    d[7] = (uint8_t)(sum & 0xFFu);
+}
+
+bool leaf_hb_valid(const uint8_t d[8]) {
+    uint8_t c[8];
+    leaf_hb_encode(c, d[4], d[5]);
+    for (int i = 0; i < 8; i++) if (c[i] != d[i]) return false;
+    return true;
 }
 
 /* ---------- fail-open mode ---------- */

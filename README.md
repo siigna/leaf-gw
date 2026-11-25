@@ -87,6 +87,8 @@ sequenceDiagram
   Note over OP,AB: Lateral is a separate path: OP → panda → V-CAN → EPS,<br/>it does NOT pass through the gateway. Below is longitudinal only.
   Note over AD,AB: The stock ADAS unit is never<br/>silenced — it keeps emitting its<br/>own 0x2B0 / 0x1C3 the whole time.
 
+  GW-)PA: 0x5FF heartbeat, 10 Hz (V-CAN)<br/>no heartbeat → no long toggle, panda drops control
+
   loop every ~10 ms
     AD->>GW: 0x2B0 / 0x1C3 stock request<br/>(Chassis CAN ADAS side → CAN1)
     OP->>PA: desired accel (m/s²)
@@ -237,6 +239,9 @@ bench step as pinning which V-CAN segment is panda bus 2.)
 - magnitude arbitration — the gateway never silences the ADAS unit, so the stock
   request stays live; `leaf_arb_*` forward whichever side commands more braking
   and always yield to a stronger stock request. That is how stock AEB survives.
+- the gateway **heartbeat** (`0x5FF`, 10 Hz, sent on the V-CAN port): openpilot
+  only offers longitudinal when it sees it at startup, and panda drops control if
+  it stops, so openpilot can't think it is driving when no gateway is inline.
 
 ```
 make test
@@ -274,13 +279,41 @@ Those are integration + hardware and are not unit-testable on a host.
 
 ## Big caveat
 
-The `0x2B0`/`0x1C3` layouts, scaling and checksum are from the StarPilot fork's
-**disabled, firmware-pinned 2025-SV-Plus experiment** — lightly proven even there,
-and not a feature anyone ships or runs. Whether a 2018–2023 ZE1 uses the same
-is unconfirmed — confirm first with the read-only validator
-`tools/leaf_iccan_check.py`: capture Chassis CAN with a panda + Cabana, a USB-CAN
-adapter, or SocketCAN `candump`, and feed the log to it. If the `0x1C3` checksum
-and the `0x2B0` inverse-copy validate, the layout carries over.
+The `0x2B0`/`0x1C3` layouts started from StarPilot's **disabled, firmware-pinned
+2025-SV-Plus experiment**. Stock logs from two ZE1s now pin down the layout; the
+**scaling** (counts per m/s², brake pressure units) is still StarPilot's and
+unverified, and nothing has been transmitted to a car.
+
+- **Public route** `44211d9f2879657d/00000024--ddf4161f21` (US `NISSAN_LEAF_IC`,
+  sunnypilot, stock ICC engaged 61% of the time; 4 segments, 23,959 frames of
+  each id on bus 1): every `0x1C3` checksum and every `0x2B0` inverse copy
+  validates. The `0x2B0` value's two low nibbles are **swapped** relative to
+  StarPilot's packer: `V = b1_hi<<8 | b2_lo<<4 | b1_lo` (= `~(b2_hi<<8 | b0)`).
+  That order is smooth (p99 frame-to-frame step 6 counts); StarPilot's jumps
+  (p99 239). Everything here now uses the corrected order; the idle, neutral and
+  brake-marker bytes are unchanged, only their decoded numbers moved (idle 5260,
+  brake marker 2398).
+- The **brake marker** (`a827d5…09`, value 2398) appears only while the friction
+  brake is applied (822 of 835 frames with `0x1C3` pressure > 0); every other
+  active value is 4096..8191. So it is a state, not a big decel on the same scale.
+- **SHIOKAZE** (openpilot Discord, 2026-11-24; receive-only logs from a June 2022
+  Japanese-spec ZE1 e+ G, bus 1 via the Nissan IC harness): independently
+  confirmed the `0x1C3` field and checksum, spotted the `0x2B0` discontinuity and
+  the 2518-is-a-state pattern, and found `0x707` `28 02` refused (`7F 28 11`), so
+  StarPilot's silencing route doesn't work on that car.
+- Still open: a handful of big jumps remain (e.g. `0x600 → 0x7FF` at engage), and
+  whether `0x1C3` is total or friction-only braking.
+
+Check your own car with the read-only validator `tools/leaf_iccan_check.py`:
+capture Chassis CAN (panda + Cabana, USB-CAN, or `candump`) and feed it the log.
+It checks the `0x1C3` checksum, the `0x2B0` inverse copy, and that the `0x2B0`
+value moves smoothly (a swapped bit order passes the inverse copy but not that).
+
+Our test car (2018 SL, 40 kWh), ECU part/version from Leaf Spy: FRONT CAMERA
+`28438`/`5SA0A`, RADAR `28438`/`5SA0C`, ABS `47660`/`5SA0A`, BRAKE `47880`/`5SA1B`,
+MOTOR CONTROL `292C0`/`5SA1A`. Leaf Spy's short version codes are probably a
+different identifier from StarPilot's `6WK2CDB` camera pin, so the mismatch proves
+nothing.
 
 ## License
 

@@ -3,8 +3,9 @@
 # Copyright (c) 2026 Stephen Bouche. See LICENSE and ATTRIBUTION.md.
 """Phase-0 read-only validator for the Nissan Leaf (ZE1) Chassis CAN gateway.
 
-Blocker #1: the 0x2B0 / 0x1C3 layouts and the 0x1C3 checksum are confirmed on a
-2025 Leaf SV Plus only. Capture Chassis CAN on the actual 2018-2023 car -- with a
+Blocker #1: the 0x2B0 / 0x1C3 layouts and the 0x1C3 checksum. Confirmed on stock
+logs from two ZE1s (a public US LEAF_IC route, and SHIOKAZE's 2022 JDM e+); the
+0x2B0 nibble order comes from the US log (StarPilot's packer had two swapped). Capture Chassis CAN on the actual 2018-2023 car -- with a
 panda + Cabana, a USB-CAN adapter, or SocketCAN `candump` -- and feed the log to
 this script. If the 0x1C3 checksum and the 0x2B0 inverse-copy validate, the
 layout almost certainly carries over and the gateway can be trusted on that car.
@@ -48,13 +49,18 @@ def dec_1c3(d):
     return pressure, active, ok
 
 
+BRAKE_MARKER = 2398   # stock 0x2B0 value while the friction brake is applied
+MAX_P99_STEP = 32     # a real command moves a few counts per 10 ms frame
+
+
 def dec_2b0(d):
-    raw = (d[1] << 4) | (d[2] & 0x0F)
+    # b1 = V_hi:V_lo, b2 = I_hi:V_mid, b0 = I (I = ~V)
+    raw = ((d[1] >> 4) << 8) | ((d[2] & 0x0F) << 4) | (d[1] & 0x0F)
     frac = (d[7] >> 2) & 0x03
     command = raw * 4 + frac
     active = bool(d[4] & 0x40)
     accel = (command - 6144) / 2048.0
-    inverse = ((d[2] >> 4) << 8) | ((d[0] & 0x0F) << 4) | (d[0] >> 4)
+    inverse = ((d[2] >> 4) << 8) | d[0]
     ok = inverse == ((~raw) & 0xFFF)
     return command, accel, active, ok
 
@@ -63,6 +69,8 @@ def run(lines):
     seen = {}
     bad = {0x1C3: 0, 0x2B0: 0}
     n = {0x1C3: 0, 0x2B0: 0}
+    prev = None
+    steps = []   # (step, prev frame, frame) between consecutive non-marker 0x2B0 frames
     for line in lines:
         p = parse(line)
         if not p:
@@ -76,6 +84,10 @@ def run(lines):
             seen[cid] = f"0x1C3 brake  pressure={pressure:4d} active={int(active)} cksum={'OK' if ok else 'BAD'}  {d.hex()}"
         else:
             command, accel, active, ok = dec_2b0(d)
+            pc = dec_2b0(prev)[0] if prev is not None else None
+            if pc is not None and BRAKE_MARKER not in (pc, command):
+                steps.append((abs(command - pc), prev.hex(), d.hex()))
+            prev = d
             if not ok:
                 bad[cid] += 1
             seen[cid] = f"0x2B0 accel  cmd={command:4d} ({accel:+.2f} m/s^2) active={int(active)} inv-copy={'OK' if ok else 'BAD'}  {d.hex()}"
@@ -85,7 +97,16 @@ def run(lines):
             print(f"      {n[cid]} frames, {bad[cid]} failed validation")
         else:
             print(f"0x{cid:03X} {IDS[cid]}: NOT SEEN -- wrong bus, or this ZE1 uses a different id")
-    ok_all = all(cid in seen and bad[cid] == 0 for cid in IDS)
+    # A real command can't jump far in one ~10 ms frame: a jumpy signal means the
+    # bit order is wrong even when the inverse copy checks out.
+    smooth = True
+    if steps:
+        p99 = sorted(st for st, _, _ in steps)[int(len(steps) * 0.99)]
+        smooth = p99 <= MAX_P99_STEP
+        top = sorted(steps, reverse=True)[:3]
+        print(f"0x2B0 smoothness: p99 step {p99} (limit {MAX_P99_STEP}) {'OK' if smooth else 'BAD -- bit order?'}; "
+              "largest " + ", ".join(f"{st} ({a}->{b})" for st, a, b in top))
+    ok_all = smooth and all(cid in seen and bad[cid] == 0 for cid in IDS)
     print("\nblocker #1:", "PASS -- layouts validate on this car" if ok_all
           else "INCOMPLETE -- see failures/missing ids above")
     return 0 if ok_all else 1
@@ -99,6 +120,12 @@ def self_test():
     assert ok, "golden 0x1C3 idle should validate"
     bad = bytearray(d); bad[2] ^= 0x10
     assert not dec_1c3(bytes(bad))[2], "corrupted frame should fail checksum"
+    # 0x2B0 golden frames from a stock ZE1 log: brake marker, neutral, two consecutive (+3)
+    brk, neu = bytes.fromhex("a827d5ac5b000e09"), bytes.fromhex("ff6090ac1b000e03")
+    assert dec_2b0(brk)[0] == BRAKE_MARKER and dec_2b0(brk)[3], "golden 0x2B0 brake marker"
+    assert dec_2b0(neu)[0] == 6144 and dec_2b0(neu)[3], "golden 0x2B0 neutral"
+    r1, r2 = bytes.fromhex("f05fa0ac5b000e09"), bytes.fromhex("ef50a1ac5b001e06")
+    assert dec_2b0(r2)[0] - dec_2b0(r1)[0] == 3 and dec_2b0(r1)[3] and dec_2b0(r2)[3], "nibble order"
     print("self-test OK")
     return 0
 

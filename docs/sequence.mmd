@@ -11,6 +11,8 @@ sequenceDiagram
   Note over OP,AB: Lateral is a separate path: OP → panda → V-CAN → EPS,<br/>it does NOT pass through the gateway. Below is longitudinal only.
   Note over AD,AB: The stock ADAS unit is never<br/>silenced — it keeps emitting its<br/>own 0x2B0 / 0x1C3 the whole time.
 
+  GW-)PA: 0x5FF heartbeat, 10 Hz (V-CAN)<br/>no heartbeat → no long toggle, panda drops control
+
   loop every ~10 ms
     AD->>GW: 0x2B0 / 0x1C3 stock request<br/>(Chassis CAN ADAS side → CAN1)
     OP->>PA: desired accel (m/s²)

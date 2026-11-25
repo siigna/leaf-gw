@@ -210,8 +210,20 @@ int main(void) {
   watchdog_init();
   enable_interrupts();
 
+  uint32_t hb_last = now_ms();
+  uint8_t hb_counter = 0;
   while (1) {
     watchdog_feed();    /* a stalled loop -> IWDG reset -> relay opens -> stock */
+    uint32_t now = now_ms();
+    if ((uint32_t)(now - hb_last) >= LEAF_HB_PERIOD_MS) {
+      /* heartbeat on the V-CAN tap: openpilot only offers / keeps longitudinal while it hears us */
+      uint8_t hb[8];
+      uint8_t status = LEAF_HB_INLINE;
+      if (leaf_mode(now, S.last_op_ms, S.engaged, S.timeout_ms) == LEAF_ACTIVE) status |= LEAF_HB_OP_ACTIVE;
+      leaf_hb_encode(hb, status, hb_counter++);
+      send_std(LEAF_ID_HEARTBEAT, hb, 2);
+      hb_last = now;
+    }
   }
   return 0;
 }
