@@ -24,7 +24,7 @@ BRAKE_GAIN = 264.0
 V_EGO_STOPPING = 0.5
 
 LEAF_LONG_BUS = 2   # V-CAN segment the gateway taps (bench-verify)
-LEAF_GW_HEARTBEAT = 0x5FF   # the gateway's 10 Hz "I'm installed and inline" frame on LEAF_LONG_BUS
+LEAF_GW_HEARTBEAT = 0x5FF   # the gateway's 50 Hz "I'm installed and inline" frame on LEAF_LONG_BUS
 
 
 def heartbeat_valid(d):

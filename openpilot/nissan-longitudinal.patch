@@ -112,7 +112,7 @@ index 24a49e02..70d919c7 100644
 +# Bus the leaf-gw gateway taps to read these frames (V-CAN; the comma already
 +# drives it for steering). Which V-CAN segment / panda bus is a bench check.
 +LEAF_LONG_BUS = 2
-+# The gateway's 10 Hz heartbeat on LEAF_LONG_BUS: longitudinal is offered only when
++# The gateway's 50 Hz heartbeat on LEAF_LONG_BUS: longitudinal is offered only when
 +# the fingerprint saw it, and panda drops control if it stops.
 +LEAF_GW_HEARTBEAT = 0x5FF
 +
@@ -268,6 +268,6 @@ index 3376c378..72d7fe87 100644
 + SG_ COUNTER : 43|4@0+ (1,0) [0|15] "" XXX
 + SG_ CHECKSUM : 63|8@0+ (1,0) [0|255] "" XXX
 +
-+CM_ BO_ 1535 "leaf-gw gateway heartbeat (github.com/siigna/leaf-gw), 10 Hz on the gateway's V-CAN bus: 'LGW' version status counter 0 checksum, checksum = (0xFF + sum bytes 0..6) & 0xFF";
++CM_ BO_ 1535 "leaf-gw gateway heartbeat (github.com/siigna/leaf-gw), 50 Hz on the gateway's V-CAN bus: 'LGW' version status counter 0 checksum, checksum = (0xFF + sum bytes 0..6) & 0xFF";
 +
  VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;

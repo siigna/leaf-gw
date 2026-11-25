@@ -30,7 +30,7 @@ keeps working.
 | frames | `0x2B0`/`0x1C3` on bus 1 | `0x2B0`/`0x1C3` on bus 2 |
 | ADAS ECU | KWP `10 C0` + `28 02`, tester present `0x707`, silence check, restore on deinit | untouched: no KWP, no `0x707`, no silence check |
 | engagement | openpilot reads SET/RES itself (`pcmCruise = False`), panda enables on button release | stock ProPILOT (`pcmCruise = True`), panda follows `CRUISE_STATE 0x30f`, like Toyota / Honda Nidec openpilot long |
-| panda RX checks | reduced set (no `0x30f`) | stock set **plus** `0x5FF` on bus 2 at 10 Hz. If the heartbeat stops, the RX checks go invalid and `controls_allowed` drops |
+| panda RX checks | reduced set (no `0x30f`) | stock set **plus** `0x5FF` on bus 2 at 50 Hz. If the heartbeat stops, the RX checks go invalid and `controls_allowed` drops |
 | `autoResumeSng` | True | False (stock cruise owns resume) |
 
 **Precedence.** The car side picks silencing mode only when the silencing mode
@@ -39,7 +39,7 @@ picks gateway mode, and only when the heartbeat is present. It never sets both
 flags. If panda gets both flags, it runs silencing mode and ignores the gateway
 flag. All of these rules are tested.
 
-**Heartbeat.** The gateway sends `0x5FF` on bus 2 at 10 Hz. Its bytes are `'L' 'G' 'W'
+**Heartbeat.** The gateway sends `0x5FF` on bus 2 at 50 Hz. Its bytes are `'L' 'G' 'W'
 0x01 status counter(4-bit) 0x00 checksum`, where checksum = `(0xFF + sum(bytes 0..6)) &
 0xFF`. The patch adds `BO_ 1535 LEAF_GW_HEARTBEAT` to
 `dbc/generator/nissan/nissan_leaf_2018.dbc` and to the vendored
@@ -107,7 +107,7 @@ would have produced `cd52a3…`, which is not the stock idle frame.
   - The nibble fix and the corrected constants.
   - Gateway mode uses its own TX list: base messages plus `0x2B0`/`0x1C3` on bus 2,
     without `0x707` and without bus 1.
-  - Gateway mode has its own RX checks: the stock set plus `{0x5ff, 2, 8, 10U}`, with
+  - Gateway mode has its own RX checks: the stock set plus `{0x5ff, 2, 8, 50U}`, with
     checksum, counter and quality ignored.
   - It keeps all of StarPilot's frame checks: inverse copy, fraction, fixed bytes,
     checksum, the active bit tied to pressure, and `get_longitudinal_allowed`.

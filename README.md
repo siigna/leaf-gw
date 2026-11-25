@@ -87,7 +87,7 @@ sequenceDiagram
   Note over OP,AB: Lateral is a separate path: OP → panda → V-CAN → EPS,<br/>it does NOT pass through the gateway. Below is longitudinal only.
   Note over AD,AB: The stock ADAS unit is never<br/>silenced — it keeps emitting its<br/>own 0x2B0 / 0x1C3 the whole time.
 
-  GW-)PA: 0x5FF heartbeat, 10 Hz (V-CAN)<br/>no heartbeat → no long toggle, panda drops control
+  GW-)PA: 0x5FF heartbeat, 50 Hz (V-CAN)<br/>no heartbeat → no long toggle, panda drops control
 
   loop every ~10 ms
     AD->>GW: 0x2B0 / 0x1C3 stock request<br/>(Chassis CAN ADAS side → CAN1)
@@ -242,7 +242,7 @@ bench step as pinning which V-CAN segment is panda bus 2.)
 - magnitude arbitration — the gateway never silences the ADAS unit, so the stock
   request stays live; `leaf_arb_*` forward whichever side commands more braking
   and always yield to a stronger stock request. That is how stock AEB survives.
-- the gateway **heartbeat** (`0x5FF`, 10 Hz, sent on the V-CAN port): openpilot
+- the gateway **heartbeat** (`0x5FF`, 50 Hz, sent on the V-CAN port): openpilot
   only offers longitudinal when it sees it at startup, and panda drops control if
   it stops, so openpilot can't think it is driving when no gateway is inline.
 

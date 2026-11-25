@@ -40,13 +40,13 @@ float   leaf_2b0_accel(const uint8_t d[8]);         /* m/s^2                    
 void    leaf_2b0_encode(uint8_t d[8], int command, bool active, uint8_t counter);
 
 /* ---- gateway heartbeat ----
- * The gateway sends this on its V-CAN port at 10 Hz so openpilot can tell a
+ * The gateway sends this on its V-CAN port at 50 Hz so openpilot can tell a
  * gateway is installed (fingerprint) and alive (panda rx check) before and while
  * it controls longitudinal. Bytes: 'L' 'G' 'W' version status counter 0 checksum,
  * checksum = (0xFF + sum d[0..6]) & 0xFF. */
 #define LEAF_ID_HEARTBEAT   0x5FFu  /* unused on every bus in 37 Leafs' logs (commaCarSegments) */
 #define LEAF_HB_VERSION     1u
-#define LEAF_HB_PERIOD_MS   100u
+#define LEAF_HB_PERIOD_MS   20u   /* 50 Hz: older forks fingerprint for only 0.1 s */
 #define LEAF_HB_INLINE      0x01u   /* MCU is bridging Chassis CAN (relay engaged)    */
 #define LEAF_HB_OP_ACTIVE   0x02u   /* gateway is substituting openpilot's command    */
 void leaf_hb_encode(uint8_t d[8], uint8_t status, uint8_t counter);

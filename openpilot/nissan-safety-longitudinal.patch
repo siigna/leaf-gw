@@ -81,7 +81,7 @@ index a2fda838..61cd672d 100644
               {0x1cc, 0, 4, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},  // DOORS_LIGHTS / BRAKE
    };
  
-+  // Leaf longitudinal also requires the leaf-gw heartbeat (0x5FF, 10 Hz) on the
++  // Leaf longitudinal also requires the leaf-gw heartbeat (0x5FF, 50 Hz) on the
 +  // gateway bus: no gateway installed or alive -> rx checks fail -> no control.
 +  static const RxCheck nissan_leaf_long_rx_checks[] = {
 +    {.msg = {{0x185, 0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // STEER_TORQUE_SENSOR
@@ -95,7 +95,7 @@ index a2fda838..61cd672d 100644
 +    {.msg = {{0x454, 0, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
 +             {0x454, 1, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
 +             {0x1cc, 0, 4, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},  // DOORS_LIGHTS / BRAKE
-+    {.msg = {{0x5ff, NISSAN_GW_BUS, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // LEAF_GW_HEARTBEAT
++    {.msg = {{0x5ff, NISSAN_GW_BUS, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // LEAF_GW_HEARTBEAT
 +  };
 +
    // EPS Location. false = V-CAN, true = C-CAN

@@ -31,7 +31,7 @@ them to a fresh worktree at the pin and runs the suites; the result is PASS.
   `dc53a2ac1b000e03`. The friction-brake marker is 2398, the stock frame
   `a827d5ac5b000e09`. Panda limits: gas 8191 max / 2398 min / 5260 inactive,
   brake max 659.
-- **Gateway heartbeat.** The gateway sends `0x5FF` `LEAF_GW_HEARTBEAT` at 10 Hz on
+- **Gateway heartbeat.** The gateway sends `0x5FF` `LEAF_GW_HEARTBEAT` at 50 Hz on
   bus 2 (`LEAF_LONG_BUS`). The car side offers alpha longitudinal only when the
   fingerprint saw `0x5FF` on bus 2. In LONG mode, panda adds `0x5FF` on bus 2 to
   its rx checks, so a missing or silent gateway invalidates them and control

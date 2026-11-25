@@ -67,11 +67,11 @@ index 2d7707bc..4582fb63 100644
      NISSAN_COMMON_RX_CHECKS
    };
  
-+  // Leaf longitudinal also requires the leaf-gw heartbeat (0x5FF, 10 Hz) on the
++  // Leaf longitudinal also requires the leaf-gw heartbeat (0x5FF, 50 Hz) on the
 +  // gateway bus: no gateway installed or alive -> rx checks fail -> no control.
 +  static RxCheck nissan_leaf_long_rx_checks[] = {
 +    NISSAN_COMMON_RX_CHECKS
-+    {.msg = {{0x5ff, NISSAN_GW_BUS, 8, 10U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // LEAF_GW_HEARTBEAT
++    {.msg = {{0x5ff, NISSAN_GW_BUS, 8, 50U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // LEAF_GW_HEARTBEAT
 +  };
 +
    // EPS Location. false = V-CAN, true = C-CAN
