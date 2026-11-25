@@ -44,7 +44,7 @@ void    leaf_2b0_encode(uint8_t d[8], int command, bool active, uint8_t counter)
  * gateway is installed (fingerprint) and alive (panda rx check) before and while
  * it controls longitudinal. Bytes: 'L' 'G' 'W' version status counter 0 checksum,
  * checksum = (0xFF + sum d[0..6]) & 0xFF. */
-#define LEAF_ID_HEARTBEAT   0x5FFu  /* unused on every Leaf bus seen (bench-verify) */
+#define LEAF_ID_HEARTBEAT   0x5FFu  /* unused on every bus in 37 Leafs' logs (commaCarSegments) */
 #define LEAF_HB_VERSION     1u
 #define LEAF_HB_PERIOD_MS   100u
 #define LEAF_HB_INLINE      0x01u   /* MCU is bridging Chassis CAN (relay engaged)    */

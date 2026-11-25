@@ -221,8 +221,11 @@ to actuate was to silence the ADAS ECU and transmit on a bus that reaches the
 brakes (StarPilot) — which kills AEB. This gateway actuates by splicing Chassis CAN
 instead, so stock AEB stays.
 
-**Safety gate:** "inert" is a property of the *bus*, not the frame — StarPilot
-proves these IDs bite on a bus that reaches the ABS. So confirm the V-CAN segment
+**Safety gate:** across 37 cars, stock `0x2B0`/`0x1C3` show up only on panda
+bus 1, never on bus 2, so nothing stock competes with openpilot's frames there.
+That doesn't prove an injected frame is inert: "inert" is a property of the
+*bus*, not the frame, and StarPilot proves these IDs bite on a bus that reaches
+the ABS. So confirm the V-CAN segment
 we transmit on is listen-only: with the interceptor absent, inject `0x2B0`/`0x1C3`
 there and verify **no actuation** and that **nothing crosses to Chassis CAN**. (Same
 bench step as pinning which V-CAN segment is panda bus 2.)
@@ -301,6 +304,27 @@ unverified, and nothing has been transmitted to a car.
   confirmed the `0x1C3` field and checksum, spotted the `0x2B0` discontinuity and
   the 2518-is-a-state pattern, and found `0x707` `28 02` refused (`7F 28 11`), so
   StarPilot's silencing route doesn't work on that car.
+- **Fleet check** (comma's public [commaCarSegments](https://huggingface.co/datasets/commaai/commaCarSegments)
+  dataset; 3 segments from each of 31 Nissan A-harness and 6 IC-harness Leafs,
+  106 segments, 635k frames of each id): zero checksum / inverse-copy failures,
+  the corrected `0x2B0` order is smooth in every segment, and the brake marker
+  bytes are identical everywhere. Stock `0x2B0`/`0x1C3` appear **only on bus 1**,
+  on both harnesses, never on bus 0 or 2, so stock never competes with
+  openpilot's frames on bus 2. `0x5FF` never appears on any bus, so the
+  heartbeat id is free.
+- **What stock braking looks like.** The highest `0x1C3` pressures (680–821) are
+  all ICC's standstill hold: the car stops, `0x2B0` goes to the brake marker,
+  `0x1C3` ramps at ~280 counts/s, and ICC releases a few seconds later. The
+  strongest braking while moving was a sudden ICC brake at 68 km/h (0 → 556 in
+  under a second, about −2 m/s²) that ended when the driver pressed the
+  accelerator. Arbitration handles both (stock is stronger, so stock wins); no
+  AEB event is in the sample.
+- **Scaling, from the same data, is unresolved.** Fitting measured acceleration
+  (wheel speed) to the stock command during ICC gives correlation 0.42. The
+  extremes roughly match StarPilot (about −0.8 / +0.8 m/s² at 4096 / 8191), but
+  steady cruise sits near 6,900 at every speed and a 5,120–5,631 cluster averages
+  about 0 m/s², so the value behaves more like a limit or torque-style request
+  than an acceleration target. It needs an active test on the bench or a test car.
 - Still open: a handful of big jumps remain (e.g. `0x600 → 0x7FF` at engage), and
   whether `0x1C3` is total or friction-only braking.
 
