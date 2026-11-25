@@ -46,36 +46,29 @@ void leaf_1c3_encode(uint8_t d[8], int pressure, bool active, bool brake_mode, u
 
 /* ---------- 0x2B0 propulsion/regen ---------- */
 
-/* 12-bit value V, nibbles spread as b1 = V_hi:V_lo, b2 = I_hi:V_mid, b0 = I_mid:I_lo
- * with I = ~V. (StarPilot's packer swaps V_mid/V_lo; a stock ZE1 log rules that out:
- * this order is smooth, theirs jumps.) */
-static int b2b0_raw(const uint8_t d[8]) {
-    return ((d[1] >> 4) << 8) | ((d[2] & 0x0F) << 4) | (d[1] & 0x0F);
-}
+/* T = (b2 << 4) | (b1 & 0xF); inverted copy I = ~T in b1_hi:b0 (SHIOKAZE's reading,
+ * confirmed on 38 cars). b7 carries a separate 2-bit field: stock sends 2 with the
+ * brake marker and mostly 0 otherwise, so that's what we send. */
 static int b2b0_inverse(const uint8_t d[8]) {
-    return ((d[2] >> 4) << 8) | d[0];
+    return ((d[1] >> 4) << 8) | d[0];
 }
-static int b2b0_frac(const uint8_t d[8]) {
+static int b2b0_aux(const uint8_t d[8]) {
     return (d[7] >> 2) & 0x03;
 }
 
 int leaf_2b0_command(const uint8_t d[8]) {
-    return b2b0_raw(d) * 4 + b2b0_frac(d);
+    return (d[2] << 4) | (d[1] & 0x0F);
 }
 
 bool leaf_2b0_active(const uint8_t d[8]) {
     return (d[4] & 0x40u) != 0;
 }
 
-float leaf_2b0_accel(const uint8_t d[8]) {
-    return (float)(leaf_2b0_command(d) - LEAF_ACCEL_ZERO) / (float)LEAF_ACCEL_SCALE;
-}
-
 bool leaf_2b0_valid(const uint8_t d[8]) {
-    if (b2b0_inverse(d) != ((~b2b0_raw(d)) & 0xFFF)) return false;
-    int frac = b2b0_frac(d);
-    if (d[7] != (uint8_t)(((frac << 2) | ((~frac) & 0x3)) & 0xFF)) return false;
-    if (d[3] != 0xAC) return false;
+    if (b2b0_inverse(d) != ((~leaf_2b0_command(d)) & 0xFFF)) return false;
+    int aux = b2b0_aux(d);
+    if (d[7] != (uint8_t)(((aux << 2) | ((~aux) & 0x3)) & 0xFF)) return false;
+    if ((d[3] & 0x1Fu) != 0x0Cu) return false;   /* top 3 bits: stock state field */
     if ((d[4] & 0xBFu) != 0x1Bu) return false;   /* active bit 0x40 masked off -> 0x1B */
     if (d[5] != 0) return false;
     if ((d[6] & 0x0Fu) != 0x0Eu) return false;
@@ -84,18 +77,17 @@ bool leaf_2b0_valid(const uint8_t d[8]) {
 
 void leaf_2b0_encode(uint8_t d[8], int command, bool active, uint8_t counter) {
     if (command < 0) command = 0;
-    if (command > 8191) command = 8191;
-    int raw = command >> 2;
-    int frac = command & 0x03;
-    int inverse = (~raw) & 0xFFF;
+    if (command > 4095) command = 4095;
+    int inverse = (~command) & 0xFFF;
+    int aux = (command == LEAF_2B0_BRAKE) ? 2 : 0;
     d[0] = (uint8_t)(inverse & 0xFF);
-    d[1] = (uint8_t)((((raw >> 8) & 0x0F) << 4) | (raw & 0x0F));
-    d[2] = (uint8_t)((((inverse >> 8) & 0x0F) << 4) | ((raw >> 4) & 0x0F));
+    d[1] = (uint8_t)((((inverse >> 8) & 0x0F) << 4) | (command & 0x0F));
+    d[2] = (uint8_t)((command >> 4) & 0xFF);
     d[3] = 0xAC;
     d[4] = active ? 0x5B : 0x1B;
     d[5] = 0;
     d[6] = (uint8_t)(0x0E | ((counter & 0x0F) << 4));
-    d[7] = (uint8_t)(((frac << 2) | ((~frac) & 0x3)) & 0xFF);
+    d[7] = (uint8_t)(((aux << 2) | ((~aux) & 0x3)) & 0xFF);
 }
 
 /* ---------- gateway heartbeat (0x5FF, gateway -> openpilot) ---------- */
@@ -142,10 +134,10 @@ int leaf_arb_pressure(leaf_mode_t m, int op_press, bool op_active, int stock_pre
 
 int leaf_arb_command(leaf_mode_t m, int op_cmd, bool op_active, int stock_cmd, bool stock_active) {
     if (m == LEAF_PASSTHROUGH) return stock_cmd;
-    int op = op_active ? op_cmd : LEAF_ACCEL_ZERO;   /* inactive op = neutral */
-    /* Stock wins only when it is actually braking (command below neutral) AND
-     * braking harder than op. A stock frame merely sitting at neutral must not
-     * block op's acceleration. Lower command = more deceleration. */
-    if (stock_active && stock_cmd < LEAF_ACCEL_ZERO && stock_cmd < op) return stock_cmd;
+    int op = op_active ? op_cmd : LEAF_2B0_IDLE;   /* inactive op = idle */
+    /* Stock wins only when it is actually decelerating (above ~0 m/s^2) AND asking for
+     * more than op. Higher T = more deceleration; the brake marker is the highest. A
+     * stock frame sitting at idle/coast must not block op's acceleration. */
+    if (stock_active && stock_cmd > LEAF_2B0_ZERO && stock_cmd > op) return stock_cmd;
     return op;
 }

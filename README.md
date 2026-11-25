@@ -283,32 +283,45 @@ Those are integration + hardware and are not unit-testable on a host.
 ## Big caveat
 
 The `0x2B0`/`0x1C3` layouts started from StarPilot's **disabled, firmware-pinned
-2025-SV-Plus experiment**. Stock logs from two ZE1s now pin down the layout; the
-**scaling** (counts per m/s², brake pressure units) is still StarPilot's and
-unverified, and nothing has been transmitted to a car.
+2025-SV-Plus experiment**. Stock logs from 38 ZE1s have since replaced most of
+it: the `0x2B0` value field, its direction and a provisional accel scale now come
+from stock data. Brake pressure scaling is still StarPilot's and unverified, and
+nothing has been transmitted to a car.
 
+- **The `0x2B0` value is T = `(b2 << 4) | (b1 & 0xF)`**, a 12-bit field whose
+  inverted copy sits in `b1_hi:b0`. **Higher T = more deceleration.** StarPilot's
+  packer scrambled it, so its accel map was meaningless for most of its range
+  (its "0 m/s²" lands at T 2304, about +0.6 m/s²). Found in two steps: the public
+  US route showed the low nibbles out of order, then SHIOKAZE showed the top nibble
+  was inverted too. On ~755k frames from 38 cars the inverted copy holds on every
+  frame and T moves smoothly (mean step 0.18 counts; big jumps are engage/idle
+  transitions).
+- **Stock values:** idle / inactive T = 2595 (`dc 53 a2 .. 1b .. 03`), the
+  friction-brake marker T = 3415 (`a8 27 d5 .. 5b .. 09`, only while `0x1C3`
+  pressure > 0: 822 of 835 frames on the US route, 8,718 of 8,718 on SHIOKAZE's
+  car), and active values in 2048..3071. "More braking" is simply the larger T,
+  marker included, which is what the gateway's arbitration uses.
+- **Byte 3 is a state field.** Its low nibble is always `0xC`; the top three bits
+  vary (`ac`, `8c` in Park, `6c`, `4c`, …) across all cars. The gateway keeps
+  stock's byte 3 when it substitutes.
+- **Accel scale (provisional):** fitting acceleration measured from wheel speed to
+  T during ICC, across the 37-car sample, gives correlation −0.76. Zero is near
+  T ≈ 2530, about +0.8 m/s² at 2272 and −0.8 at 2784, flatter in between. The
+  openpilot mapping interpolates those medians. It needs an active bench or
+  test-car check before anyone relies on it.
 - **Public route** `44211d9f2879657d/00000024--ddf4161f21` (US `NISSAN_LEAF_IC`,
-  sunnypilot, stock ICC engaged 61% of the time; 4 segments, 23,959 frames of
-  each id on bus 1): every `0x1C3` checksum and every `0x2B0` inverse copy
-  validates. The `0x2B0` value's two low nibbles are **swapped** relative to
-  StarPilot's packer: `V = b1_hi<<8 | b2_lo<<4 | b1_lo` (= `~(b2_hi<<8 | b0)`).
-  That order is smooth (p99 frame-to-frame step 6 counts); StarPilot's jumps
-  (p99 239). Everything here now uses the corrected order; the idle, neutral and
-  brake-marker bytes are unchanged, only their decoded numbers moved (idle 5260,
-  brake marker 2398).
-- The **brake marker** (`a827d5…09`, value 2398) appears only while the friction
-  brake is applied (822 of 835 frames with `0x1C3` pressure > 0); every other
-  active value is 4096..8191. So it is a state, not a big decel on the same scale.
+  sunnypilot, stock ICC engaged 61% of the time; 23,959 frames of each id on
+  bus 1): every `0x1C3` checksum and every `0x2B0` inverse copy validates.
 - **SHIOKAZE** (openpilot Discord, 2026-11-24; receive-only logs from a June 2022
   Japanese-spec ZE1 e+ G, bus 1 via the Nissan IC harness): independently
-  confirmed the `0x1C3` field and checksum, spotted the `0x2B0` discontinuity and
-  the 2518-is-a-state pattern, and found `0x707` `28 02` refused (`7F 28 11`), so
-  StarPilot's silencing route doesn't work on that car.
+  confirmed the `0x1C3` field and checksum, worked out the `0x2B0` value field
+  (T), the brake-marker state and that `b4 & 0x40` means engaged and moving, and
+  found `0x707` `28 02` refused (`7F 28 11`), so StarPilot's silencing route
+  doesn't work on that car.
 - **Fleet check** (comma's public [commaCarSegments](https://huggingface.co/datasets/commaai/commaCarSegments)
   dataset; 3 segments from each of 31 Nissan A-harness and 6 IC-harness Leafs,
   106 segments, 635k frames of each id): zero checksum / inverse-copy failures,
-  the corrected `0x2B0` order is smooth in every segment, and the brake marker
-  bytes are identical everywhere. Stock `0x2B0`/`0x1C3` appear **only on bus 1**,
+  and the brake marker bytes are identical everywhere. Stock `0x2B0`/`0x1C3` appear **only on bus 1**,
   on both harnesses, never on bus 0 or 2, so stock never competes with
   openpilot's frames on bus 2. `0x5FF` never appears on any bus, so the
   heartbeat id is free.
@@ -319,19 +332,14 @@ unverified, and nothing has been transmitted to a car.
   under a second, about −2 m/s²) that ended when the driver pressed the
   accelerator. Arbitration handles both (stock is stronger, so stock wins); no
   AEB event is in the sample.
-- **Scaling, from the same data, is unresolved.** Fitting measured acceleration
-  (wheel speed) to the stock command during ICC gives correlation 0.42. The
-  extremes roughly match StarPilot (about −0.8 / +0.8 m/s² at 4096 / 8191), but
-  steady cruise sits near 6,900 at every speed and a 5,120–5,631 cluster averages
-  about 0 m/s², so the value behaves more like a limit or torque-style request
-  than an acceleration target. It needs an active test on the bench or a test car.
-- Still open: a handful of big jumps remain (e.g. `0x600 → 0x7FF` at engage), and
-  whether `0x1C3` is total or friction-only braking.
+- Still open: the brake pressure scaling, whether `0x1C3` is total or
+  friction-only braking, and what byte 3's state bits and byte 7's 2-bit field
+  mean.
 
 Check your own car with the read-only validator `tools/leaf_iccan_check.py`:
 capture Chassis CAN (panda + Cabana, USB-CAN, or `candump`) and feed it the log.
 It checks the `0x1C3` checksum, the `0x2B0` inverse copy, and that the `0x2B0`
-value moves smoothly (a swapped bit order passes the inverse copy but not that).
+value moves smoothly (a wrong bit order can pass the inverse copy but not that).
 
 Our test car (2018 SL, 40 kWh), ECU part/version from Leaf Spy: FRONT CAMERA
 `28438`/`5SA0A`, RADAR `28438`/`5SA0C`, ABS `47660`/`5SA0A`, BRAKE `47880`/`5SA1B`,

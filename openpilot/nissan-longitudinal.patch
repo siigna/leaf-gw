@@ -1,5 +1,5 @@
 diff --git a/opendbc/car/nissan/carcontroller.py b/opendbc/car/nissan/carcontroller.py
-index 42f693a2..a1350b5c 100644
+index 42f693a2..70445de2 100644
 --- a/opendbc/car/nissan/carcontroller.py
 +++ b/opendbc/car/nissan/carcontroller.py
 @@ -8,6 +8,7 @@ from opendbc.car.nissan.values import CAR, CarControllerParams
@@ -10,7 +10,7 @@ index 42f693a2..a1350b5c 100644
  
  
  class CarController(CarControllerBase):
-@@ -28,6 +29,34 @@ class CarController(CarControllerBase):
+@@ -28,6 +29,33 @@ class CarController(CarControllerBase):
  
      can_sends = []
  
@@ -28,12 +28,11 @@ index 42f693a2..a1350b5c 100644
 +        if brake_mode:
 +          raw_accel = CarControllerParams.PROPILOT_BRAKE_RAW
 +        else:
-+          propulsion = float(np.clip(accel, CarControllerParams.PROPILOT_ACCEL_MIN, CarControllerParams.PROPILOT_ACCEL_MAX))
-+          raw_accel = round(propulsion * CarControllerParams.PROPILOT_ACCEL_SCALE + CarControllerParams.PROPILOT_ACCEL_OFFSET)
++          raw_accel = round(float(np.interp(accel, CarControllerParams.ACCEL_BP, CarControllerParams.T_BP)))
 +      else:
 +        raw_accel = CarControllerParams.PROPILOT_INACTIVE_RAW
 +
-+      brake_pressure = round(max(0.0, -accel - 1.0) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
++      brake_pressure = round(max(0.0, CarControllerParams.PROPILOT_ACCEL_MIN - accel) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
 +      if stopping and CS.out.vEgo < self.CP.vEgoStopping:
 +        brake_pressure = CarControllerParams.BRAKE_MAX
 +      brake_pressure = int(np.clip(brake_pressure, 0, CarControllerParams.BRAKE_MAX))
@@ -45,7 +44,7 @@ index 42f693a2..a1350b5c 100644
      ### STEER ###
      steer_hud_alert = 1 if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) else 0
  
-@@ -81,6 +110,8 @@ class CarController(CarControllerBase):
+@@ -81,6 +109,8 @@ class CarController(CarControllerBase):
  
      new_actuators = actuators.as_builder()
      new_actuators.steeringAngleDeg = self.apply_angle_last
@@ -101,7 +100,7 @@ index 8253d484..67488722 100644
        # Altima has EPS on C-CAN unlike the others that have it on V-CAN
        ret.safetyConfigs[0].safetyParam |= NissanSafetyFlags.ALT_EPS_BUS.value
 diff --git a/opendbc/car/nissan/nissancan.py b/opendbc/car/nissan/nissancan.py
-index 24a49e02..70d919c7 100644
+index 24a49e02..797aed10 100644
 --- a/opendbc/car/nissan/nissancan.py
 +++ b/opendbc/car/nissan/nissancan.py
 @@ -1,6 +1,14 @@
@@ -119,28 +118,27 @@ index 24a49e02..70d919c7 100644
  # TODO: add this checksum to the CANPacker
  nissan_checksum = mk_crc8_fun(CRC8J1850, init_crc=0x00, xor_out=0xFF)
  
-@@ -152,3 +160,36 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
+@@ -152,3 +160,35 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
      values["HANDS_ON_WHEEL_WARNING"] = 1
  
    return packer.make_can_msg("PROPILOT_HUD_INFO_MSG", 0, values)
 +
 +
-+def create_accel_command(raw_command, frame, active):
-+  """Leaf ADAS propulsion/regen request (0x2B0). leaf-gw re-stamps the counter
-+  and re-emits it on Chassis CAN; openpilot only owns the command value."""
-+  raw_command = int(raw_command)
-+  # value nibbles: dat[1] = V_hi:V_lo, dat[2] = I_hi:V_mid, dat[0] = I, with I = ~V
-+  raw12, fraction = divmod(raw_command, 4)
-+  inverse = (~raw12) & 0xFFF
++def create_accel_command(command, frame, active):
++  """Leaf ADAS propulsion/regen request (0x2B0). command = T, higher = more decel.
++  leaf-gw re-stamps the counter and stock state byte and re-emits it on Chassis CAN."""
++  t = int(min(max(int(command), 0), 4095))
++  inverse = (~t) & 0xFFF
++  aux = 2 if t == 3415 else 0   # stock pairs the friction-brake marker with aux 2
 +  dat = bytes([
 +    inverse & 0xFF,
-+    (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
-+    (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
++    (((inverse >> 8) & 0xF) << 4) | (t & 0xF),
++    (t >> 4) & 0xFF,
 +    0xAC,
 +    0x5B if active else 0x1B,
 +    0x00,
 +    ((frame & 0xF) << 4) | 0xE,
-+    (fraction << 2) | ((~fraction) & 0x3),
++    (aux << 2) | ((~aux) & 0x3),
 +  ])
 +  return CanData(0x2B0, dat, LEAF_LONG_BUS)
 +
@@ -158,7 +156,7 @@ index 24a49e02..70d919c7 100644
 +  return CanData(0x1C3, bytes(dat), LEAF_LONG_BUS)
 diff --git a/opendbc/car/nissan/tests/test_leaf_gw.py b/opendbc/car/nissan/tests/test_leaf_gw.py
 new file mode 100644
-index 00000000..13980213
+index 00000000..1bf3ca67
 --- /dev/null
 +++ b/opendbc/car/nissan/tests/test_leaf_gw.py
 @@ -0,0 +1,58 @@
@@ -203,7 +201,7 @@ index 00000000..13980213
 +  # stock ZE1 frames (public route): idle, friction-brake marker, neutral
 +  assert create_accel_command(CarControllerParams.PROPILOT_INACTIVE_RAW, 0, False).dat.hex() == "dc53a2ac1b000e03"
 +  assert create_accel_command(CarControllerParams.PROPILOT_BRAKE_RAW, 0, True).dat.hex() == "a827d5ac5b000e09"
-+  assert create_accel_command(6144, 0, True).dat.hex() == "ff6090ac5b000e03"
++  assert create_accel_command(2304, 0, True).dat.hex() == "ff6090ac5b000e03"
 +
 +
 +def test_leaf_long_controller_emits_frames():
@@ -221,24 +219,24 @@ index 00000000..13980213
 +    now += int(DT_CTRL * 1e9)
 +  assert (0x2B0, LEAF_LONG_BUS) in sent and (0x1C3, LEAF_LONG_BUS) in sent
 diff --git a/opendbc/car/nissan/values.py b/opendbc/car/nissan/values.py
-index 7d6e48a3..73ec58c0 100644
+index 7d6e48a3..968d9442 100644
 --- a/opendbc/car/nissan/values.py
 +++ b/opendbc/car/nissan/values.py
 @@ -23,12 +23,27 @@ class CarControllerParams:
    LKAS_MAX_TORQUE = 1               # A value of 1 is easy to overpower
    STEER_THRESHOLD = 1.0
  
-+  # 2025 Leaf ProPILOT longitudinal limits. The propulsion/regen request (0x2B0)
-+  # has 2048 counts per m/s^2 about a 6144-count zero; friction braking (0x1C3)
-+  # blends in below -1 m/s^2. From the StarPilot fork (2025 SV Plus).
++  # Leaf ProPILOT longitudinal via leaf-gw. Friction braking (0x1C3) blends in below
++  # PROPILOT_ACCEL_MIN with StarPilot's (unverified) pressure gain.
++  # 0x2B0 T: higher = more deceleration. accel -> T is the median of 37 stock Leafs'
++  # ICC logs (commaCarSegments, accel from wheel speed); PROVISIONAL until bench-tested.
 +  ACCEL_MIN = -3.5
-+  ACCEL_MAX = 2047 / 2048
-+  PROPILOT_ACCEL_MIN = -1.0
-+  PROPILOT_ACCEL_MAX = ACCEL_MAX
-+  PROPILOT_ACCEL_OFFSET = 6144
-+  PROPILOT_ACCEL_SCALE = 2048
-+  PROPILOT_INACTIVE_RAW = 5260  # stock idle frame
-+  PROPILOT_BRAKE_RAW = 2398     # stock friction-brake marker
++  ACCEL_BP = [-0.78, -0.45, -0.11, -0.04, 0.0, 0.05, 0.09, 0.59, 0.79]
++  T_BP = [2784, 2720, 2656, 2592, 2528, 2464, 2400, 2336, 2272]
++  PROPILOT_ACCEL_MIN = ACCEL_BP[0]   # below this, friction brake
++  ACCEL_MAX = PROPILOT_ACCEL_MAX = ACCEL_BP[-1]
++  PROPILOT_INACTIVE_RAW = 2595  # stock idle frame
++  PROPILOT_BRAKE_RAW = 3415     # stock friction-brake marker
 +  BRAKE_MAX = 659
 +  BRAKE_GAIN = 264.0
 +
@@ -253,7 +251,7 @@ index 7d6e48a3..73ec58c0 100644
  
  class Footnote(Enum):
 diff --git a/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc b/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
-index 3376c378..72d7fe87 100644
+index 3376c378..18229983 100644
 --- a/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
 +++ b/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
 @@ -59,4 +59,14 @@ BO_ 1549 DOORS_LIGHTS: 8 XXX

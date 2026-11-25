@@ -11,10 +11,10 @@ index 26c1387b..0cf70923 100644
    bool subaru_gen2;
    bool subaru_pg_reversed_driver_torque;
 diff --git a/opendbc/safety/modes/nissan.h b/opendbc/safety/modes/nissan.h
-index a2fda838..61cd672d 100644
+index a2fda838..76a20599 100644
 --- a/opendbc/safety/modes/nissan.h
 +++ b/opendbc/safety/modes/nissan.h
-@@ -67,6 +67,18 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
+@@ -67,6 +67,19 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
    }
  }
  
@@ -24,24 +24,24 @@ index a2fda838..61cd672d 100644
 +// stock AEB by magnitude arbitration.
 +#define NISSAN_GW_BUS 2
 +const LongitudinalLimits NISSAN_LONG_LIMITS = {
-+  .max_gas = 8191,       // 0x2B0 raw command ceiling (12-bit)
-+  .min_gas = 2398,       // PROPILOT_BRAKE_RAW (stock friction-brake marker)
-+  .inactive_gas = 5260,  // PROPILOT_INACTIVE_RAW (stock idle frame)
++  // 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
++  .max_gas = 3415,       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
++  .min_gas = 2272,       // most acceleration openpilot may request (~+0.8 m/s^2)
++  .inactive_gas = 2595,  // PROPILOT_INACTIVE_RAW (stock idle frame)
 +  .max_brake = 659,      // 0x1C3 pressure ceiling (0.5-count units)
 +};
 +
  static bool nissan_tx_hook(const CANPacket_t *msg) {
    bool tx = true;
    bool violation = false;
-@@ -95,6 +107,24 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
+@@ -95,6 +108,23 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
      violation = (msg->data[1] & 0x3dU) > 0U;
    }
  
 +  // leaf-gw propulsion/regen request (0x2B0)
 +  if (msg->addr == 0x2b0U) {
-+    // 12-bit value: data[1] = V_hi:V_lo, data[2] low nibble = V_mid
-+    int raw12 = ((msg->data[1] >> 4) << 8) | ((msg->data[2] & 0x0FU) << 4) | (msg->data[1] & 0x0FU);
-+    int command = (raw12 << 2) | ((msg->data[7] >> 2) & 0x03U);
++    // T = data[2] << 4 | data[1] low nibble (inverted copy in data[1] high nibble + data[0])
++    int command = (msg->data[2] << 4) | (msg->data[1] & 0x0FU);
 +    if (longitudinal_gas_checks(command, NISSAN_LONG_LIMITS)) {
 +      violation = true;
 +    }
@@ -119,7 +119,7 @@ index a2fda838..61cd672d 100644
  
  static const safety_hooks nissan_hooks = {
 diff --git a/opendbc/safety/tests/test_nissan.py b/opendbc/safety/tests/test_nissan.py
-index b80cbe7d..7bb385ad 100755
+index b80cbe7d..2a3167a3 100755
 --- a/opendbc/safety/tests/test_nissan.py
 +++ b/opendbc/safety/tests/test_nissan.py
 @@ -4,6 +4,7 @@ import unittest
@@ -147,27 +147,25 @@ index b80cbe7d..7bb385ad 100755
 +
 +  # mirrors CarControllerParams / modes/nissan.h NISSAN_LONG_LIMITS
 +  GW_BUS = 2
-+  MAX_GAS = 8191
-+  MIN_GAS = 2398
-+  INACTIVE_GAS = 5260
++  MAX_GAS = 3415
++  MIN_GAS = 2272
++  INACTIVE_GAS = 2595
 +  MAX_BRAKE = 659
  
    def _user_brake_msg(self, brake):
      values = {"USER_BRAKE_PRESSED": brake}
-@@ -107,6 +123,88 @@ class TestNissanLeafSafety(TestNissanSafety):
+@@ -107,6 +123,86 @@ class TestNissanLeafSafety(TestNissanSafety):
    def test_acc_buttons(self):
      pass
  
-+  def _accel_msg(self, raw_command, active=True):
-+    raw_command = int(raw_command)
-+    raw12, fraction = divmod(raw_command, 4)
-+    inverse = (~raw12) & 0xFFF
++  def _accel_msg(self, command, active=True):
++    t = int(command)
++    inverse = (~t) & 0xFFF
 +    dat = bytes([
 +      inverse & 0xFF,
-+      (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
-+      (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
-+      0xAC, 0x5B if active else 0x1B, 0x00, 0x0E,
-+      (fraction << 2) | ((~fraction) & 0x3),
++      (((inverse >> 8) & 0xF) << 4) | (t & 0xF),
++      (t >> 4) & 0xFF,
++      0xAC, 0x5B if active else 0x1B, 0x00, 0x0E, 0x03,
 +    ])
 +    return make_msg(self.GW_BUS, 0x2b0, 8, dat)
 +
@@ -184,7 +182,7 @@ index b80cbe7d..7bb385ad 100755
 +
 +  def test_leaf_gas_limits(self):
 +    self.safety.set_controls_allowed(True)
-+    for cmd in range(0, 8192, 64):
++    for cmd in range(0, 4096, 32):
 +      should_tx = self.MIN_GAS <= cmd <= self.MAX_GAS
 +      self.assertEqual(should_tx, self._tx(self._accel_msg(cmd)), msg=f"gas={cmd}")
 +
@@ -199,7 +197,7 @@ index b80cbe7d..7bb385ad 100755
 +    # only the inactive no-op may go out
 +    self.assertTrue(self._tx(self._accel_msg(self.INACTIVE_GAS, active=False)))
 +    self.assertTrue(self._tx(self._brake_msg(0, active=False)))
-+    self.assertFalse(self._tx(self._accel_msg(7000)))
++    self.assertFalse(self._tx(self._accel_msg(2400)))
 +    self.assertFalse(self._tx(self._accel_msg(self.MIN_GAS)))
 +    self.assertFalse(self._tx(self._brake_msg(200)))
 +
@@ -237,7 +235,7 @@ index b80cbe7d..7bb385ad 100755
 +    # driver on the accelerator -> longitudinal not allowed even if engaged
 +    self.safety.set_controls_allowed(True)
 +    self.safety.set_gas_pressed_prev(True)
-+    self.assertFalse(self._tx(self._accel_msg(7000)))
++    self.assertFalse(self._tx(self._accel_msg(2400)))
 +    self.assertTrue(self._tx(self._accel_msg(self.INACTIVE_GAS, active=False)))
 +
  

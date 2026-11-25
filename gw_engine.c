@@ -46,5 +46,7 @@ gw_action gw_on_adas_frame(const gw_state *s, uint32_t now_ms,
     if (chosen == stock_c) return GW_FORWARD;         /* stock won -> untouched */
     uint8_t counter = (in[6] >> 4) & 0x0F;            /* keep the ADAS rolling counter */
     leaf_2b0_encode(out, chosen, true, counter);
+    out[3] = in[3];                                   /* keep the stock state field */
+    out[4] = (uint8_t)(in[4] | 0x40u);
     return GW_SUBSTITUTE;
 }

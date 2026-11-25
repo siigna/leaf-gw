@@ -22,8 +22,11 @@
 #define LEAF_ID_ACCEL 0x2B0u   /* propulsion/regen request, ADAS -> VCM      */
 #define LEAF_ID_BRAKE 0x1C3u   /* friction-brake request, ADAS -> ABS unit   */
 
-#define LEAF_ACCEL_ZERO   6144 /* raw_command at 0 m/s^2                     */
-#define LEAF_ACCEL_SCALE  2048 /* raw_command counts per m/s^2              */
+/* 0x2B0 command = T, a 12-bit field: T = (b2 << 4) | (b1 & 0xF), with its inverted
+ * copy in b1_hi:b0. Higher T = more deceleration. Values from stock ZE1 logs. */
+#define LEAF_2B0_IDLE   2595  /* stock idle / inactive frame (dc 53 a2 .. 03)           */
+#define LEAF_2B0_BRAKE  3415  /* stock "friction brake engaged" marker (a8 27 d5 .. 09) */
+#define LEAF_2B0_ZERO   2530  /* ~0 m/s^2 (37-car fit, provisional)                     */
 
 /* ---- 0x1C3 friction brake ---- */
 uint8_t leaf_1c3_checksum(const uint8_t d[8]);      /* (0x01+0xC3+sum d[0..6]) & 0xFF */
@@ -34,9 +37,9 @@ void    leaf_1c3_encode(uint8_t d[8], int pressure, bool active, bool brake_mode
 
 /* ---- 0x2B0 propulsion/regen ---- */
 bool    leaf_2b0_valid(const uint8_t d[8]);         /* inverse-copy + fixed bytes ok */
-int     leaf_2b0_command(const uint8_t d[8]);       /* raw_command (0..8191)     */
+int     leaf_2b0_command(const uint8_t d[8]);       /* T (0..4095), higher = more decel */
 bool    leaf_2b0_active(const uint8_t d[8]);
-float   leaf_2b0_accel(const uint8_t d[8]);         /* m/s^2                     */
+/* byte 3 is a stock state field; encode writes 0xAC, the gateway keeps the stock one */
 void    leaf_2b0_encode(uint8_t d[8], int command, bool active, uint8_t counter);
 
 /* ---- gateway heartbeat ----
@@ -61,7 +64,7 @@ leaf_mode_t leaf_mode(uint32_t now_ms, uint32_t last_op_ms, bool engaged, uint32
 /* ---- magnitude arbitration ---- */
 /* Brake pressure (0x1C3): higher = more braking. Stock always allowed to win. */
 int  leaf_arb_pressure(leaf_mode_t m, int op_press, bool op_active, int stock_press, bool stock_active);
-/* Accel (0x2B0): lower command = more braking / less accel. Stock braking wins. */
+/* Accel (0x2B0): higher T = more deceleration. Stock decel stronger than op wins. */
 int  leaf_arb_command(leaf_mode_t m, int op_cmd, bool op_active, int stock_cmd, bool stock_active);
 
 #endif

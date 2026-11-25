@@ -12,10 +12,12 @@ Plus longitudinal code (one developer's experiment, gated off by
 lightly proven, and on a 2018–2023 ZE1 entirely unverified. A starting point, not
 ground truth.
 
-The openpilot-side longitudinal calibration in `openpilot/leaf_gw_long.py`
-(the accel→command mapping, brake gain, and the inactive/brake raw command
-values) is StarPilot's as well, and the openpilot patch emits the same real
-0x2B0/0x1C3 frames StarPilot does — the difference is it sends them to the
+The 0x1C3 brake gain in `openpilot/leaf_gw_long.py` is still StarPilot's. The
+0x2B0 value field, its accel mapping and the idle / brake-marker values were
+re-derived from stock logs (comma's public commaCarSegments, a public sunnypilot
+route, and SHIOKAZE's receive-only logs), because StarPilot's packer scrambled
+that field. The openpilot patch emits the same real 0x2B0/0x1C3 frames StarPilot
+does — the difference is it sends them to the
 gateway's bus (V-CAN) and keeps the stock ADAS ECU live, rather than silencing
 it.
 - https://github.com/commaai/opendbc  (MIT)

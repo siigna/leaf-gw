@@ -1,8 +1,8 @@
 diff --git a/board/safety/safety_nissan.h b/board/safety/safety_nissan.h
-index b97bd1fb..3188faaf 100644
+index b97bd1fb..57b2339d 100644
 --- a/board/safety/safety_nissan.h
 +++ b/board/safety/safety_nissan.h
-@@ -20,6 +20,26 @@ const CanMsg NISSAN_TX_MSGS[] = {
+@@ -20,6 +20,27 @@ const CanMsg NISSAN_TX_MSGS[] = {
    {0x280, 2, 8}   // CANCEL_MSG (Leaf)
  };
  
@@ -10,9 +10,10 @@ index b97bd1fb..3188faaf 100644
 +// 0x1C3 (friction brake) on the gateway's control bus (V-CAN). The gateway
 +// re-emits them onto Chassis CAN and keeps stock AEB by magnitude arbitration.
 +#define NISSAN_GW_BUS 2
-+const int NISSAN_LEAF_MAX_GAS = 8191;       // 0x2B0 raw command ceiling
-+const int NISSAN_LEAF_MIN_GAS = 2398;       // PROPILOT_BRAKE_RAW (stock friction-brake marker)
-+const int NISSAN_LEAF_INACTIVE_GAS = 5260;  // PROPILOT_INACTIVE_RAW (stock idle frame)
++// 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
++const int NISSAN_LEAF_MAX_GAS = 3415;       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
++const int NISSAN_LEAF_MIN_GAS = 2272;       // most acceleration openpilot may request (~+0.8 m/s^2)
++const int NISSAN_LEAF_INACTIVE_GAS = 2595;  // PROPILOT_INACTIVE_RAW (stock idle frame)
 +const int NISSAN_LEAF_MAX_BRAKE = 659;      // 0x1C3 pressure ceiling (0.5-count units)
 +
 +const CanMsg NISSAN_LEAF_LONG_TX_MSGS[] = {
@@ -29,7 +30,7 @@ index b97bd1fb..3188faaf 100644
  // Signals duplicated below due to the fact that these messages can come in on either CAN bus, depending on car model.
  AddrCheckStruct nissan_addr_checks[] = {
    {.msg = {{0x2, 0, 5, .expected_timestep = 10000U},
-@@ -36,10 +56,34 @@ AddrCheckStruct nissan_addr_checks[] = {
+@@ -36,10 +57,34 @@ AddrCheckStruct nissan_addr_checks[] = {
             {0x1cc, 0, 4, .expected_timestep = 10000U}}}, // DOORS_LIGHTS (10Hz) / BRAKE (100Hz)
  };
  #define NISSAN_ADDR_CHECK_LEN (sizeof(nissan_addr_checks) / sizeof(nissan_addr_checks[0]))
@@ -64,7 +65,7 @@ index b97bd1fb..3188faaf 100644
  
  static int nissan_rx_hook(CANPacket_t *to_push) {
  
-@@ -100,14 +144,38 @@ static int nissan_rx_hook(CANPacket_t *to_push) {
+@@ -100,14 +145,37 @@ static int nissan_rx_hook(CANPacket_t *to_push) {
  
  
  static int nissan_tx_hook(CANPacket_t *to_send, bool longitudinal_allowed) {
@@ -89,9 +90,8 @@ index b97bd1fb..3188faaf 100644
 +  // leaf-gw propulsion/regen request (0x2B0): a bounded command while longitudinal
 +  // is allowed (engaged, gas not pressed), otherwise only the stock idle value
 +  if (addr == 0x2b0) {
-+    // 12-bit value: byte 1 = V_hi:V_lo, byte 2 low nibble = V_mid; byte 7 bits 2-3 = fraction
-+    int raw12 = ((GET_BYTE(to_send, 1) >> 4) << 8) | ((GET_BYTE(to_send, 2) & 0xFU) << 4) | (GET_BYTE(to_send, 1) & 0xFU);
-+    int command = (raw12 << 2) | ((GET_BYTE(to_send, 7) >> 2) & 0x3U);
++    // T = byte 2 << 4 | byte 1 low nibble (inverted copy in byte 1 high nibble + byte 0)
++    int command = (GET_BYTE(to_send, 2) << 4) | (GET_BYTE(to_send, 1) & 0xFU);
 +    bool command_valid = longitudinal_allowed && (command >= NISSAN_LEAF_MIN_GAS) && (command <= NISSAN_LEAF_MAX_GAS);
 +    if (!command_valid && (command != NISSAN_LEAF_INACTIVE_GAS)) {
 +      violation = 1;
@@ -149,7 +149,7 @@ index e4d1c332..61c502a8 100644
            continue
          self.assertFalse(self._tx(msg), f"transmit of {addr=:#x} {bus=} from {test_name} was allowed")
 diff --git a/tests/safety/test_nissan.py b/tests/safety/test_nissan.py
-index c354f402..05f51007 100755
+index c354f402..7c7fbc8c 100755
 --- a/tests/safety/test_nissan.py
 +++ b/tests/safety/test_nissan.py
 @@ -1,10 +1,10 @@
@@ -165,7 +165,7 @@ index c354f402..05f51007 100755
  
  ANGLE_DELTA_BP = [0., 5., 15.]
  ANGLE_DELTA_V = [5., .8, .15]     # windup limit
-@@ -161,5 +161,138 @@ class TestNissanLeafSafety(TestNissanSafety):
+@@ -161,5 +161,139 @@ class TestNissanLeafSafety(TestNissanSafety):
    def test_acc_buttons(self):
      pass
  
@@ -181,9 +181,9 @@ index c354f402..05f51007 100755
 +
 +  # mirrors selfdrive/car/nissan CarControllerParams and safety_nissan.h
 +  GW_BUS = 2
-+  MAX_GAS = 8191
-+  MIN_GAS = 2398
-+  INACTIVE_GAS = 5260
++  MAX_GAS = 3415       # 0x2B0 T: higher = more decel; the brake marker is the top
++  MIN_GAS = 2272
++  INACTIVE_GAS = 2595
 +  MAX_BRAKE = 659
 +
 +  def setUp(self):
@@ -195,15 +195,16 @@ index c354f402..05f51007 100755
 +  def _msg(self, addr, dat, bus=GW_BUS):
 +    return package_can_msg([addr, 0, bytes(dat), bus])
 +
-+  def _accel_msg(self, raw_command, active=True):
-+    raw12, fraction = divmod(int(raw_command), 4)
-+    inverse = (~raw12) & 0xFFF
++  def _accel_msg(self, command, active=True):
++    t = int(command)
++    inverse = (~t) & 0xFFF
++    aux = 2 if t == self.MAX_GAS else 0
 +    return self._msg(0x2b0, [
 +      inverse & 0xFF,
-+      (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
-+      (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
++      (((inverse >> 8) & 0xF) << 4) | (t & 0xF),
++      (t >> 4) & 0xFF,
 +      0xAC, 0x5B if active else 0x1B, 0x00, 0x0E,
-+      (fraction << 2) | ((~fraction) & 0x3),
++      (aux << 2) | ((~aux) & 0x3),
 +    ])
 +
 +  def _brake_msg(self, pressure, active=True, brake_mode=False):
@@ -223,7 +224,7 @@ index c354f402..05f51007 100755
 +  def test_gas_limits(self):
 +    for allowed in (True, False):
 +      self.safety.set_controls_allowed(allowed)
-+      for cmd in [*range(0, 16384, 61), self.MIN_GAS - 1, self.MIN_GAS, self.MAX_GAS, self.MAX_GAS + 1, self.INACTIVE_GAS]:
++      for cmd in [*range(0, 4096, 7), self.MIN_GAS - 1, self.MIN_GAS, self.MAX_GAS, self.MAX_GAS + 1, self.INACTIVE_GAS]:
 +        should_tx = (allowed and self.MIN_GAS <= cmd <= self.MAX_GAS) or cmd == self.INACTIVE_GAS
 +        self.assertEqual(should_tx, self._tx(self._accel_msg(cmd)), msg=f"{allowed=} gas={cmd}")
 +
@@ -241,7 +242,7 @@ index c354f402..05f51007 100755
 +      self.assertFalse(self._tx(package_can_msg([0x1c3, 0, bytes(8), bus])))
 +
 +  def test_stock_frames(self):
-+    # golden stock ZE1 frames: idle == inactive (always allowed), brake marker == min gas
++    # golden stock ZE1 frames: idle == inactive (always allowed), brake marker == max T
 +    idle, marker = bytes.fromhex("dc53a2ac1b000e03"), bytes.fromhex("a827d5ac5b000e09")
 +    self.safety.set_controls_allowed(False)
 +    self.assertTrue(self._tx(self._msg(0x2b0, idle)))
@@ -255,12 +256,12 @@ index c354f402..05f51007 100755
 +    self.safety.set_controls_allowed(True)
 +    self._rx(self._user_gas_msg(self.GAS_PRESSED_THRESHOLD + 1))
 +    self.assertTrue(self.safety.get_controls_allowed())
-+    self.assertFalse(self._tx(self._accel_msg(7000)))
++    self.assertFalse(self._tx(self._accel_msg(2500)))
 +    self.assertFalse(self._tx(self._brake_msg(200)))
 +    self.assertTrue(self._tx(self._accel_msg(self.INACTIVE_GAS, active=False)))
 +    self.assertTrue(self._tx(self._brake_msg(0, active=False)))
 +    self._rx(self._user_gas_msg(0))
-+    self.assertTrue(self._tx(self._accel_msg(7000)))
++    self.assertTrue(self._tx(self._accel_msg(2500)))
 +
 +  def _feed_rx_checks(self, heartbeat):
 +    self._rx(self._angle_meas_msg(0))

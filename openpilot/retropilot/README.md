@@ -46,17 +46,32 @@ at the commits above. The suites below were run on that tree.
 ## What changes
 
 `openpilot.patch` (`selfdrive/car/nissan/`):
-- `values.py`: the longitudinal `CarControllerParams` constants (identical to `leaf_gw_long.py`).
+- `values.py`: the longitudinal `CarControllerParams` constants, identical to
+  `leaf_gw_long.py`:
+  - `ACCEL_BP` and `T_BP`, the provisional accel→T curve;
+  - `PROPILOT_ACCEL_MIN = -0.78` and `ACCEL_MAX = 0.79`;
+  - inactive T 2595 and brake-marker T 3415;
+  - `BRAKE_MAX` 659 and `BRAKE_GAIN` 264.
 - `nissancan.py`: `LEAF_LONG_BUS = 2`, `LEAF_GW_HEARTBEAT = 0x5FF`, and
   `create_accel_command` / `create_brake_command`. They return 0.8.13's
   `[addr, 0, dat, bus]` and are byte-identical to `pack_accel` / `pack_brake`.
-  This was checked over raw 0..16383 and pressure 0..1023 × frame 0..31 × active
-  × brake_mode.
-- `carcontroller.py`: the `gateway_longitudinal` mapping. `CC.longActive` does not
+  This was checked over T -4..4099 (which crosses the 0..4095 clip) and pressure
+  0..1023, × frame 0..31 × active × brake_mode.
+  - `0x2B0` carries the 12-bit `T = (d2 << 4) | (d1 & 0xF)`; higher T means more
+    deceleration.
+  - The inverted copy sits in `d1_hi:d0`.
+  - `d7 = aux<<2 | (~aux & 3)`, where aux is 2 only for the brake marker (T 3415).
+- `carcontroller.py`: the `gateway_longitudinal` mapping:
+  - `T = round(interp(accel, ACCEL_BP, T_BP))`;
+  - the brake marker below `PROPILOT_ACCEL_MIN` or when stopping;
+  - `pressure = round(max(0, PROPILOT_ACCEL_MIN - accel) * BRAKE_GAIN)`.
+
+  The curve uses `common.numpy_fast.interp`, which does the same float operations
+  as the spec's `_interp`. `CC.longActive` does not
   exist in 0.8.13, so it uses `c.active`. `actuatorsOutput.accel` is the clipped
   accel.
 - `interface.py`: the opt-in, the heartbeat gate, `FLAG_NISSAN_LEAF_LONG`, and
-  `get_pid_accel_limits` of (-3.5, 2047/2048). `pcmCruise` stays at the default
+  `get_pid_accel_limits` of (-3.5, 0.79). `pcmCruise` stays at the default
   (True) and `autoResumeSng` is not touched. The Altima's literal
   `safetyParam = 1` became `Panda.FLAG_NISSAN_ALT_EPS_BUS`, with the same value.
 - `selfdrive/car/tests/test_nissan_leaf_gw.py` (new). It checks:
@@ -78,8 +93,9 @@ at the commits above. The suites below were run on that tree.
     which is 50 Hz).
   - Explicit bounds, because this panda has no `LongitudinalLimits`.
     `long_allowed = controls_allowed && !gas_pressed_prev`.
-  - `0x2B0`: `raw12 = ((d1>>4)<<8)|((d2&0xF)<<4)|(d1&0xF)`, `command = raw12<<2 | frac`.
-    It must be in 2398..8191 when allowed, and exactly 5260 otherwise.
+  - `0x2B0`: `command = (d2 << 4) | (d1 & 0xF)`. It must be in 2272..3415 when
+    allowed, and exactly 2595 otherwise. T counts up with deceleration, so 3415
+    (the brake marker) is the ceiling.
   - `0x1C3`: pressure must be ≤ 659, and 0 when not allowed.
   - The checks run only in LONG mode. A violation drops `controls_allowed`, like
     every other violation in this file.
@@ -230,7 +246,11 @@ python3 -m pytest -q selfdrive/car/tests/test_car_interfaces.py -k NISSAN
 
 - The one failure, in both columns, is `test_toyota.py::TestToyotaSafety::test_torque_measurements`.
   It is unrelated and was not investigated.
-- The new tests fail on the old code. Run against the unpatched panda C (with only
+- `openpilot/check-forks.sh retropilot` (via `fork.sh`) PASSes with these
+  counts. With a deliberately wrong spec copy (`PROPILOT_INACTIVE_RAW = 2596`),
+  `fork.sh` exits 1: `test_leaf_gw_long.py` fails, and `test_nissan_leaf_gw.py`
+  gives 1 failed / 7 passed.
+- The new tests fail on the old code (measured before the T-layout update). Run against the unpatched panda C (with only
   the test and flag files applied), `test_nissan.py` gives 15 failed / 57 passed.
   The inherited Leaf tests fail too, because the old `param ? 1 : 0` turns on
   alt-EPS. `test_nissan_leaf_gw.py` fails at import.

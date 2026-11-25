@@ -4,11 +4,11 @@
 """Phase-0 read-only validator for the Nissan Leaf (ZE1) Chassis CAN gateway.
 
 Blocker #1: the 0x2B0 / 0x1C3 layouts and the 0x1C3 checksum. Confirmed on stock
-logs from two ZE1s (a public US LEAF_IC route, and SHIOKAZE's 2022 JDM e+); the
-0x2B0 nibble order comes from the US log (StarPilot's packer had two swapped). Capture Chassis CAN on the actual 2018-2023 car -- with a
-panda + Cabana, a USB-CAN adapter, or SocketCAN `candump` -- and feed the log to
-this script. If the 0x1C3 checksum and the 0x2B0 inverse-copy validate, the
-layout almost certainly carries over and the gateway can be trusted on that car.
+logs from 38 ZE1s (comma's commaCarSegments, a public US LEAF_IC route, and
+SHIOKAZE's 2022 JDM e+). The 0x2B0 value is T = (b2 << 4) | (b1 & 0xF); StarPilot's
+packer had it scrambled. Capture Chassis CAN on your car -- with a panda + Cabana,
+a USB-CAN adapter, or SocketCAN `candump` -- and feed the log to this script. It
+checks the 0x1C3 checksum, the 0x2B0 inverse copy, and that T moves smoothly.
 
 Pure decode. It reads a log; it never touches a bus, so it is safe on any car.
 
@@ -49,20 +49,16 @@ def dec_1c3(d):
     return pressure, active, ok
 
 
-BRAKE_MARKER = 2398   # stock 0x2B0 value while the friction brake is applied
+BRAKE_MARKER = 3415   # stock 0x2B0 T while the friction brake is applied
 MAX_P99_STEP = 32     # a real command moves a few counts per 10 ms frame
 
 
 def dec_2b0(d):
-    # b1 = V_hi:V_lo, b2 = I_hi:V_mid, b0 = I (I = ~V)
-    raw = ((d[1] >> 4) << 8) | ((d[2] & 0x0F) << 4) | (d[1] & 0x0F)
-    frac = (d[7] >> 2) & 0x03
-    command = raw * 4 + frac
+    # T = (b2 << 4) | (b1 & 0xF), inverted copy in b1_hi:b0; higher T = more decel
+    t = (d[2] << 4) | (d[1] & 0x0F)
     active = bool(d[4] & 0x40)
-    accel = (command - 6144) / 2048.0
-    inverse = ((d[2] >> 4) << 8) | d[0]
-    ok = inverse == ((~raw) & 0xFFF)
-    return command, accel, active, ok
+    ok = (((d[1] >> 4) << 8) | d[0]) == ((~t) & 0xFFF)
+    return t, None, active, ok
 
 
 def run(lines):
@@ -90,7 +86,7 @@ def run(lines):
             prev = d
             if not ok:
                 bad[cid] += 1
-            seen[cid] = f"0x2B0 accel  cmd={command:4d} ({accel:+.2f} m/s^2) active={int(active)} inv-copy={'OK' if ok else 'BAD'}  {d.hex()}"
+            seen[cid] = f"0x2B0 accel  T={command:4d} active={int(active)} inv-copy={'OK' if ok else 'BAD'}  {d.hex()}"
     for cid in (0x1C3, 0x2B0):
         if cid in seen:
             print(seen[cid])
@@ -120,12 +116,13 @@ def self_test():
     assert ok, "golden 0x1C3 idle should validate"
     bad = bytearray(d); bad[2] ^= 0x10
     assert not dec_1c3(bytes(bad))[2], "corrupted frame should fail checksum"
-    # 0x2B0 golden frames from a stock ZE1 log: brake marker, neutral, two consecutive (+3)
+    # 0x2B0 golden frames from stock ZE1 logs: brake marker, a cruise frame, two consecutive
     brk, neu = bytes.fromhex("a827d5ac5b000e09"), bytes.fromhex("ff6090ac1b000e03")
     assert dec_2b0(brk)[0] == BRAKE_MARKER and dec_2b0(brk)[3], "golden 0x2B0 brake marker"
-    assert dec_2b0(neu)[0] == 6144 and dec_2b0(neu)[3], "golden 0x2B0 neutral"
-    r1, r2 = bytes.fromhex("f05fa0ac5b000e09"), bytes.fromhex("ef50a1ac5b001e06")
-    assert dec_2b0(r2)[0] - dec_2b0(r1)[0] == 3 and dec_2b0(r1)[3] and dec_2b0(r2)[3], "nibble order"
+    assert dec_2b0(neu)[0] == 2304 and dec_2b0(neu)[3], "golden 0x2B0 cruise frame"
+    # consecutive stock frames across the 0x900 boundary: 3 counts apart, not ~510
+    r1, r2 = bytes.fromhex("fd6290ac5b005e03"), bytes.fromhex("007f8fac5b006e06")
+    assert dec_2b0(r1)[0] - dec_2b0(r2)[0] == 3 and dec_2b0(r1)[3] and dec_2b0(r2)[3], "field layout"
     print("self-test OK")
     return 0
 

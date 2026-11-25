@@ -1,5 +1,5 @@
 diff --git a/selfdrive/car/nissan/carcontroller.py b/selfdrive/car/nissan/carcontroller.py
-index 8b30c11..d169ff1 100644
+index 8b30c11..c4882cb 100644
 --- a/selfdrive/car/nissan/carcontroller.py
 +++ b/selfdrive/car/nissan/carcontroller.py
 @@ -6,6 +6,7 @@ from selfdrive.car.nissan.values import CAR, CarControllerParams
@@ -10,7 +10,7 @@ index 8b30c11..d169ff1 100644
  
  
  class CarController():
-@@ -23,6 +24,34 @@ class CarController():
+@@ -23,6 +24,33 @@ class CarController():
  
      can_sends = []
  
@@ -29,12 +29,11 @@ index 8b30c11..d169ff1 100644
 +        if brake_mode:
 +          raw_accel = CarControllerParams.PROPILOT_BRAKE_RAW
 +        else:
-+          propulsion = clip(accel, CarControllerParams.PROPILOT_ACCEL_MIN, CarControllerParams.PROPILOT_ACCEL_MAX)
-+          raw_accel = round(propulsion * CarControllerParams.PROPILOT_ACCEL_SCALE + CarControllerParams.PROPILOT_ACCEL_OFFSET)
++          raw_accel = round(interp(accel, CarControllerParams.ACCEL_BP, CarControllerParams.T_BP))
 +      else:
 +        raw_accel = CarControllerParams.PROPILOT_INACTIVE_RAW
 +
-+      brake_pressure = round(max(0.0, -accel - 1.0) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
++      brake_pressure = round(max(0.0, CarControllerParams.PROPILOT_ACCEL_MIN - accel) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
 +      if stopping and CS.out.vEgo < self.CP.vEgoStopping:
 +        brake_pressure = CarControllerParams.BRAKE_MAX
 +      brake_pressure = int(clip(brake_pressure, 0, CarControllerParams.BRAKE_MAX))
@@ -45,7 +44,7 @@ index 8b30c11..d169ff1 100644
      ### STEER ###
      acc_active = CS.out.cruiseState.enabled
      lkas_hud_msg = CS.lkas_hud_msg
-@@ -87,5 +116,7 @@ class CarController():
+@@ -87,5 +115,7 @@ class CarController():
  
      new_actuators = actuators.copy()
      new_actuators.steeringAngleDeg = apply_angle
@@ -114,45 +113,47 @@ index c32fb13..fda9c09 100644
      # civic and scaling by mass and wheelbase
      ret.rotationalInertia = scale_rot_inertia(ret.mass, ret.wheelbase)
 diff --git a/selfdrive/car/nissan/nissancan.py b/selfdrive/car/nissan/nissancan.py
-index ceace50..1638b97 100644
+index ceace50..187bd2f 100644
 --- a/selfdrive/car/nissan/nissancan.py
 +++ b/selfdrive/car/nissan/nissancan.py
-@@ -2,6 +2,13 @@ import copy
+@@ -1,6 +1,14 @@
+ import copy
  import crcmod
- from selfdrive.car.nissan.values import CAR
- 
+-from selfdrive.car.nissan.values import CAR
++from common.numpy_fast import clip
++from selfdrive.car.nissan.values import CAR, CarControllerParams
++
 +# Bus the leaf-gw gateway taps to read the longitudinal frames (V-CAN; the comma
 +# already drives it for steering). Which V-CAN segment / panda bus is a bench check.
 +LEAF_LONG_BUS = 2
 +# The gateway's 50 Hz heartbeat on LEAF_LONG_BUS (50 Hz so the 0.1 s fingerprint window sees it): longitudinal is offered only when
 +# the fingerprint saw it, and panda drops control if it stops.
 +LEAF_GW_HEARTBEAT = 0x5FF
-+
+ 
  nissan_checksum = crcmod.mkCrcFun(0x11d, initCrc=0x00, rev=False, xorOut=0xff)
  
- 
-@@ -69,3 +76,36 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
+@@ -69,3 +77,36 @@ def create_lkas_hud_info_msg(packer, lkas_hud_info_msg, steer_hud_alert):
      values["HANDS_ON_WHEEL_WARNING"] = 1
  
    return packer.make_can_msg("PROPILOT_HUD_INFO_MSG", 0, values)
 +
 +
-+def create_accel_command(raw_command, frame, active):
-+  """Leaf ADAS propulsion/regen request (0x2B0). leaf-gw re-stamps the counter
-+  and re-emits it on Chassis CAN; openpilot only owns the command value."""
-+  raw_command = int(raw_command)
-+  # value nibbles: dat[1] = V_hi:V_lo, dat[2] = I_hi:V_mid, dat[0] = I, with I = ~V
-+  raw12, fraction = divmod(raw_command, 4)
-+  inverse = (~raw12) & 0xFFF
++def create_accel_command(command, frame, active):
++  """Leaf ADAS propulsion/regen request (0x2B0) for T = command (higher T = more
++  deceleration). leaf-gw re-stamps the counter and re-emits it on Chassis CAN."""
++  t = int(clip(int(command), 0, 4095))
++  # T = dat[2] << 4 | dat[1] low nibble; inverted copy in dat[1] high nibble + dat[0]
++  inverse = (~t) & 0xFFF
++  aux = 2 if t == CarControllerParams.PROPILOT_BRAKE_RAW else 0  # stock pairs the marker with aux 2
 +  dat = bytes([
 +    inverse & 0xFF,
-+    (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
-+    (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
++    (((inverse >> 8) & 0xF) << 4) | (t & 0xF),
++    (t >> 4) & 0xFF,
 +    0xAC,
 +    0x5B if active else 0x1B,
 +    0x00,
 +    ((frame & 0xF) << 4) | 0xE,
-+    (fraction << 2) | ((~fraction) & 0x3),
++    (aux << 2) | ((~aux) & 0x3),
 +  ])
 +  return [0x2B0, 0, dat, LEAF_LONG_BUS]
 +
@@ -169,24 +170,24 @@ index ceace50..1638b97 100644
 +  dat[7] = (0x01 + 0xC3 + sum(dat[:7])) & 0xFF
 +  return [0x1C3, 0, bytes(dat), LEAF_LONG_BUS]
 diff --git a/selfdrive/car/nissan/values.py b/selfdrive/car/nissan/values.py
-index f7001d1..a2efc6d 100644
+index f7001d1..9c8b96b 100644
 --- a/selfdrive/car/nissan/values.py
 +++ b/selfdrive/car/nissan/values.py
 @@ -10,6 +10,20 @@ class CarControllerParams:
    LKAS_MAX_TORQUE = 1               # A value of 1 is easy to overpower
    STEER_THRESHOLD = 1.0
  
-+  # Leaf longitudinal via the leaf-gw gateway. The propulsion/regen request (0x2B0)
-+  # has 2048 counts per m/s^2 about a 6144-count zero; friction braking (0x1C3)
-+  # blends in below -1 m/s^2. From the StarPilot fork (2025 SV Plus).
++  # Leaf ProPILOT longitudinal via leaf-gw. Friction braking (0x1C3) blends in below
++  # PROPILOT_ACCEL_MIN with StarPilot's (unverified) pressure gain.
++  # 0x2B0 T: higher = more deceleration. accel -> T is the median of 37 stock Leafs'
++  # ICC logs (commaCarSegments, accel from wheel speed); PROVISIONAL until bench-tested.
 +  ACCEL_MIN = -3.5
-+  ACCEL_MAX = 2047 / 2048
-+  PROPILOT_ACCEL_MIN = -1.0
-+  PROPILOT_ACCEL_MAX = ACCEL_MAX
-+  PROPILOT_ACCEL_OFFSET = 6144
-+  PROPILOT_ACCEL_SCALE = 2048
-+  PROPILOT_INACTIVE_RAW = 5260  # stock idle frame
-+  PROPILOT_BRAKE_RAW = 2398     # stock friction-brake marker
++  ACCEL_BP = [-0.78, -0.45, -0.11, -0.04, 0.0, 0.05, 0.09, 0.59, 0.79]
++  T_BP = [2784, 2720, 2656, 2592, 2528, 2464, 2400, 2336, 2272]
++  PROPILOT_ACCEL_MIN = ACCEL_BP[0]   # below this, friction brake
++  ACCEL_MAX = PROPILOT_ACCEL_MAX = ACCEL_BP[-1]
++  PROPILOT_INACTIVE_RAW = 2595  # stock idle frame
++  PROPILOT_BRAKE_RAW = 3415     # stock friction-brake marker
 +  BRAKE_MAX = 659
 +  BRAKE_GAIN = 264.0
 +
@@ -195,10 +196,10 @@ index f7001d1..a2efc6d 100644
    LEAF = "NISSAN LEAF 2018"
 diff --git a/selfdrive/car/tests/test_nissan_leaf_gw.py b/selfdrive/car/tests/test_nissan_leaf_gw.py
 new file mode 100644
-index 0000000..0c1ad3e
+index 0000000..76f5640
 --- /dev/null
 +++ b/selfdrive/car/tests/test_nissan_leaf_gw.py
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,164 @@
 +#!/usr/bin/env python3
 +# Nissan Leaf longitudinal via the leaf-gw gateway (github.com/siigna/leaf-gw).
 +import importlib.util
@@ -234,9 +235,12 @@ index 0000000..0c1ad3e
 +
 +
 +def _decode_2b0(d):
-+  raw12 = ((d[1] >> 4) << 8) | ((d[2] & 0xF) << 4) | (d[1] & 0xF)
-+  assert ((d[2] >> 4) << 8) | d[0] == (~raw12) & 0xFFF, "0x2B0 inverse copy"
-+  return raw12 * 4 + ((d[7] >> 2) & 0x3)
++  t = (d[2] << 4) | (d[1] & 0xF)
++  assert ((d[1] >> 4) << 8) | d[0] == (~t) & 0xFFF, "0x2B0 inverse copy"
++  aux = (d[7] >> 2) & 0x3
++  assert d[7] == (aux << 2) | (~aux & 0x3), "0x2B0 aux check"
++  assert aux == (2 if t == P.PROPILOT_BRAKE_RAW else 0)
++  return t
 +
 +
 +def _decode_1c3(d):
@@ -279,7 +283,9 @@ index 0000000..0c1ad3e
 +    # stock ZE1 frames (public route): idle, friction-brake marker, neutral
 +    self.assertEqual("dc53a2ac1b000e03", create_accel_command(P.PROPILOT_INACTIVE_RAW, 0, False)[2].hex())
 +    self.assertEqual("a827d5ac5b000e09", create_accel_command(P.PROPILOT_BRAKE_RAW, 0, True)[2].hex())
-+    self.assertEqual("ff6090ac5b000e03", create_accel_command(6144, 0, True)[2].hex())
++    self.assertEqual("ff6090ac5b000e03", create_accel_command(2304, 0, True)[2].hex())
++    for t in range(4096):
++      self.assertEqual(t, _decode_2b0(create_accel_command(t, t, t % 2 == 0)[2]))
 +    for p in range(0, P.BRAKE_MAX + 1):
 +      self.assertEqual(p, _decode_1c3(create_brake_command(p, 3, p > 0, p > 0)[2]))
 +
@@ -303,11 +309,13 @@ index 0000000..0c1ad3e
 +  def test_controller_emits_long_frames(self):
 +    CI = self._ci()
 +    for accel, active, stopping, v_ego, cmd, pressure in (
-+        (0.0, True, False, 10., 6144, 0),
-+        (0.5, True, False, 10., 7168, 0),
-+        (-0.5, True, False, 10., 5120, 0),
-+        (-2.0, True, False, 10., P.PROPILOT_BRAKE_RAW, 264),
-+        (-9.0, True, False, 10., P.PROPILOT_BRAKE_RAW, P.BRAKE_MAX),  # clipped to -3.5: 660 -> 659
++        (0.0, True, False, 10., 2528, 0),
++        (0.79, True, False, 10., 2272, 0),
++        (2.0, True, False, 10., 2272, 0),  # clipped to ACCEL_MAX
++        (-0.45, True, False, 10., 2720, 0),
++        (-0.78, True, False, 10., 2784, 0),
++        (-2.0, True, False, 10., P.PROPILOT_BRAKE_RAW, round((2.0 - 0.78) * P.BRAKE_GAIN)),
++        (-9.0, True, False, 10., P.PROPILOT_BRAKE_RAW, P.BRAKE_MAX),  # clipped to -3.5: 718 -> 659
 +        (0.0, True, True, 0.1, P.PROPILOT_BRAKE_RAW, P.BRAKE_MAX),  # standstill hold
 +        (1.0, False, False, 10., P.PROPILOT_INACTIVE_RAW, 0),
 +        (-3.0, False, False, 10., P.PROPILOT_INACTIVE_RAW, 0),
@@ -329,22 +337,22 @@ index 0000000..0c1ad3e
 +  @unittest.skipUnless(HAVE_SPEC, "copy leaf-gw/openpilot/leaf_gw_long.py into selfdrive/car/nissan/")
 +  def test_matches_leaf_gw_spec(self):
 +    from selfdrive.car.nissan import leaf_gw_long as L  # pylint: disable=import-error,no-name-in-module
-+    for name in ("ACCEL_MIN", "ACCEL_MAX", "PROPILOT_ACCEL_MIN", "PROPILOT_ACCEL_MAX", "PROPILOT_ACCEL_OFFSET",
-+                 "PROPILOT_ACCEL_SCALE", "PROPILOT_INACTIVE_RAW", "PROPILOT_BRAKE_RAW", "BRAKE_MAX", "BRAKE_GAIN"):
++    for name in ("ACCEL_MIN", "ACCEL_MAX", "ACCEL_BP", "T_BP", "PROPILOT_ACCEL_MIN", "PROPILOT_ACCEL_MAX",
++                 "PROPILOT_INACTIVE_RAW", "PROPILOT_BRAKE_RAW", "BRAKE_MAX", "BRAKE_GAIN"):
 +      self.assertEqual(getattr(L, name), getattr(P, name), name)
 +    self.assertEqual((L.LEAF_LONG_BUS, L.LEAF_GW_HEARTBEAT), (LEAF_LONG_BUS, LEAF_GW_HEARTBEAT))
 +    # packers: byte-identical over the whole input space
 +    for frame in range(32):
 +      for active in (False, True):
-+        for raw in range(16384):
++        for raw in range(-4, 4100):  # includes the 0..4095 clip edges
 +          self.assertEqual(L.pack_accel(raw, frame, active), create_accel_command(raw, frame, active)[2])
 +        for p in range(1024):
 +          for brake_mode in (False, True):
 +            self.assertEqual(L.pack_brake(p, frame, active, brake_mode), create_brake_command(p, frame, active, brake_mode)[2])
 +    # controller mapping == gateway_longitudinal, frames included
 +    CI = self._ci()
-+    for i in range(-16, 5):
-+      accel = i * 0.25
++    for i in range(-400, 101):
++      accel = i * 0.01
 +      for active in (False, True):
 +        for stopping in (False, True):
 +          for v_ego in (0.1, 5.0):

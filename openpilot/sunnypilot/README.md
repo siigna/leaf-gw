@@ -4,7 +4,8 @@ The `../nissan-*.patch` files target upstream commaai/opendbc. These two target
 **sunnypilot/opendbc `11c61f3e`** (master, "HKG: Car Port for Kia Carnival 2027").
 They produce the same frames, safety bounds and gateway heartbeat gate as upstream.
 `nissancan` packs byte-identical frames to `../leaf_gw_long.py`. That was checked
-over every command, pressure, frame counter and flag combination (278528 cases).
+over T -16..4111 (to exercise the clip), every pressure, frame counter and flag
+combination (148480 cases).
 
 ## Apply
 
@@ -21,16 +22,20 @@ them to a fresh worktree at the pin and runs the suites; the result is PASS.
 
 ## Frames and engagement
 
-- **`0x2B0` layout** (verified on a stock ZE1 log). With the 12-bit value V and
-  its inverse I = ~V & 0xFFF:
-  - byte0 = I & 0xFF
-  - byte1 = V_hi:V_lo
-  - byte2 = I_hi:V_mid
-
-  Two of the decoded values move as a result. Idle is 5260, the stock frame
-  `dc53a2ac1b000e03`. The friction-brake marker is 2398, the stock frame
-  `a827d5ac5b000e09`. Panda limits: gas 8191 max / 2398 min / 5260 inactive,
-  brake max 659.
+- **`0x2B0` layout** (from SHIOKAZE's data, verified on 38 cars). The frame
+  carries a 12-bit value `T = (b2 << 4) | (b1 & 0xF)`, with its inverted copy in
+  `b1_hi:b0`. **Higher T means more deceleration.**
+  - Byte 7 is `aux<<2 | (~aux & 3)`. aux is 2 only for the brake marker, else 0.
+  - The accel to T curve is linear interpolation over
+    `ACCEL_BP = [-0.78 … 0.79]` and `T_BP = [2784 … 2272]`. It is the median of
+    37 stock Leafs and is **provisional** until bench-tested.
+  - Below `PROPILOT_ACCEL_MIN` (-0.78 m/s^2), openpilot sends the stock
+    friction-brake marker T 3415 (`a827d5ac5b000e09`). The 0x1C3 pressure is then
+    `round((PROPILOT_ACCEL_MIN - accel) * 264)`; that gain is StarPilot's and is
+    unverified.
+  - Idle is T 2595 (`dc53a2ac1b000e03`).
+  - Panda limits: T 2272..3415, inactive 2595, brake max 659. The shared
+    helper's "gas" here is just the bounded T range.
 - **Gateway heartbeat.** The gateway sends `0x5FF` `LEAF_GW_HEARTBEAT` at 50 Hz on
   bus 2 (`LEAF_LONG_BUS`). The car side offers alpha longitudinal only when the
   fingerprint saw `0x5FF` on bus 2. In LONG mode, panda adds `0x5FF` on bus 2 to
@@ -99,7 +104,8 @@ Nothing failed before the patches. With the ICBM guard reverted, the new
   - the params for every Nissan with alpha_long on and off: `pcmCruise` True,
     `autoResumeSng` False, LONG flag and ICBM availability;
   - the heartbeat gate (absent, bus 0, bus 1);
-  - the golden stock `0x2B0` frames;
-  - a direct CarController run with long on that emits `0x2B0`/`0x1C3` on bus 2;
+  - the golden stock `0x2B0` frames (2304, 2595 and 3415);
+  - direct CarController runs with long on: accel 0 gives T 2528 with no friction
+    brake; accel -2 gives the brake marker with pressure 322; both go out on bus 2;
   - no long frames without the toggle;
   - the ICBM guard.

@@ -76,7 +76,7 @@ void puth2(unsigned int i) { (void)i; }
  * same formats the stock ADAS unit uses -- so the gateway just decodes them and
  * feeds gw_set_op. The engine re-stamps the stock rolling counter + checksum
  * when it substitutes onto Chassis CAN, so openpilot's own counter here is ignored. */
-static int  op_command = LEAF_ACCEL_ZERO;
+static int  op_command = LEAF_2B0_IDLE;
 static int  op_pressure = 0;
 static bool op_engaged = false;
 static bool op_brake = false;

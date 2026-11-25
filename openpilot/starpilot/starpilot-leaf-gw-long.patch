@@ -1,5 +1,5 @@
 diff --git a/opendbc_repo/opendbc/car/nissan/carcontroller.py b/opendbc_repo/opendbc/car/nissan/carcontroller.py
-index bf83d90..a1c95b2 100644
+index bf83d90..5ada658 100644
 --- a/opendbc_repo/opendbc/car/nissan/carcontroller.py
 +++ b/opendbc_repo/opendbc/car/nissan/carcontroller.py
 @@ -6,7 +6,7 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
@@ -30,7 +30,21 @@ index bf83d90..a1c95b2 100644
        accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
        stopping = actuators.longControlState == LongCtrlState.stopping
        brake_mode = CC.longActive and (accel < CarControllerParams.PROPILOT_ACCEL_MIN or stopping)
-@@ -50,11 +53,11 @@ class CarController(CarControllerBase):
+@@ -38,23 +41,20 @@ class CarController(CarControllerBase):
+         if brake_mode:
+           raw_accel = CarControllerParams.PROPILOT_BRAKE_RAW
+         else:
+-          propulsion_accel = float(np.clip(accel, CarControllerParams.PROPILOT_ACCEL_MIN,
+-                                           CarControllerParams.PROPILOT_ACCEL_MAX))
+-          raw_accel = round(propulsion_accel * CarControllerParams.PROPILOT_ACCEL_SCALE +
+-                            CarControllerParams.PROPILOT_ACCEL_OFFSET)
++          raw_accel = round(float(np.interp(accel, CarControllerParams.ACCEL_BP, CarControllerParams.T_BP)))
+       else:
+         raw_accel = CarControllerParams.PROPILOT_INACTIVE_RAW
+ 
+-      brake_pressure = round(max(0.0, -accel - 1.0) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
++      brake_pressure = round(max(0.0, CarControllerParams.PROPILOT_ACCEL_MIN - accel) * CarControllerParams.BRAKE_GAIN) if brake_mode else 0
+       if stopping and CS.out.vEgo < self.CP.vEgoStopping:
          brake_pressure = CarControllerParams.BRAKE_MAX
        brake_pressure = int(np.clip(brake_pressure, 0, CarControllerParams.BRAKE_MAX))
  
@@ -45,7 +59,7 @@ index bf83d90..a1c95b2 100644
          can_sends.append(nissancan.create_leaf_adas_tester_present())
  
      ### STEER ###
-@@ -94,7 +97,7 @@ class CarController(CarControllerBase):
+@@ -94,7 +94,7 @@ class CarController(CarControllerBase):
      # this generates a beep and a warning message every time you disengage
      if self.CP.carFingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC) and self.frame % 2 == 0:
        can_sends.append(nissancan.create_cancel_msg(self.packer, CS.cancel_msg,
@@ -148,46 +162,51 @@ index 70c68dc..171c913 100644
  
      restore_leaf_adas_tx(can_recv, can_send)
 diff --git a/opendbc_repo/opendbc/car/nissan/nissancan.py b/opendbc_repo/opendbc/car/nissan/nissancan.py
-index 8c15b92..524bbdb 100644
+index 8c15b92..2cdb432 100644
 --- a/opendbc_repo/opendbc/car/nissan/nissancan.py
 +++ b/opendbc_repo/opendbc/car/nissan/nissancan.py
-@@ -2,6 +2,12 @@ import crcmod
+@@ -1,6 +1,12 @@
+ import crcmod
  from opendbc.car.can_definitions import CanData
- from opendbc.car.nissan.values import CAR
- 
+-from opendbc.car.nissan.values import CAR
++from opendbc.car.nissan.values import CAR, CarControllerParams
++
 +# Bus the leaf-gw inline gateway taps for 0x2B0/0x1C3 (V-CAN, panda bus 2).
 +LEAF_GW_LONG_BUS = 2
 +# The gateway's 50 Hz heartbeat on LEAF_GW_LONG_BUS: gateway mode is offered only when the
 +# fingerprint saw it there, and panda's rx check drops control if it stops.
 +LEAF_GW_HEARTBEAT = 0x5FF
-+
+ 
  # TODO: add this checksum to the CANPacker
  nissan_checksum = crcmod.mkCrcFun(0x11d, initCrc=0x00, rev=False, xorOut=0xff)
- 
-@@ -11,26 +17,27 @@ def create_leaf_adas_tester_present():
+@@ -11,26 +17,26 @@ def create_leaf_adas_tester_present():
    return CanData(0x707, b"\x02\x3E\x01\x00\x00\x00\x00\x00", 0)
  
  
 -def create_accel_command(raw_command, frame, active):
-+def create_accel_command(raw_command, frame, active, bus=1):
-   """Build the Leaf ADAS propulsion/regen request (0x2B0)."""
-   raw_command = int(raw_command)
-   raw12, fraction = divmod(raw_command, 4)
-   inverse = (~raw12) & 0xFFF
+-  """Build the Leaf ADAS propulsion/regen request (0x2B0)."""
+-  raw_command = int(raw_command)
+-  raw12, fraction = divmod(raw_command, 4)
+-  inverse = (~raw12) & 0xFFF
++def create_accel_command(command, frame, active, bus=1):
++  """Build the Leaf ADAS propulsion/regen request (0x2B0). command = T, higher = more decel."""
++  t = int(min(max(int(command), 0), 4095))
++  inverse = (~t) & 0xFFF
++  aux = 2 if t == CarControllerParams.PROPILOT_BRAKE_RAW else 0  # stock pairs the friction-brake marker with aux 2
  
-+  # 12-bit value V, I = ~V: dat[0] = I_mid:I_lo, dat[1] = V_hi:V_lo, dat[2] = I_hi:V_mid (stock ZE1 layout)
    dat = bytes([
 -    ((inverse & 0xF) << 4) | ((inverse >> 4) & 0xF),
 -    (raw12 >> 4) & 0xFF,
 -    (((inverse >> 8) & 0xF) << 4) | (raw12 & 0xF),
 +    inverse & 0xFF,
-+    (((raw12 >> 8) & 0xF) << 4) | (raw12 & 0xF),
-+    (((inverse >> 8) & 0xF) << 4) | ((raw12 >> 4) & 0xF),
++    (((inverse >> 8) & 0xF) << 4) | (t & 0xF),
++    (t >> 4) & 0xFF,
      0xAC,  # normal ADAS ownership state; stock briefly uses 0x6C while handing control back
      0x5B if active else 0x1B,
      0x00,
      ((frame & 0xF) << 4) | 0xE,
-     (fraction << 2) | ((~fraction) & 0x3),
+-    (fraction << 2) | ((~fraction) & 0x3),
++    (aux << 2) | ((~aux) & 0x3),
    ])
 -  return CanData(0x2B0, dat, 1)
 +  return CanData(0x2B0, dat, bus)
@@ -198,7 +217,7 @@ index 8c15b92..524bbdb 100644
    """Build the Leaf ADAS friction-brake request (0x1C3), with pressure in 0.5-count units."""
    pressure = int(pressure)
    dat = bytearray(8)
-@@ -40,7 +47,7 @@ def create_brake_command(pressure, frame, active, brake_mode):
+@@ -40,7 +46,7 @@ def create_brake_command(pressure, frame, active, brake_mode):
    dat[5] = (0x80 if active else 0) | (0x04 if brake_mode else 0) | (frame & 0x3)
    dat[6] = 0xFF
    dat[7] = (0x01 + 0xC3 + sum(dat[:7])) & 0xFF
@@ -208,7 +227,7 @@ index 8c15b92..524bbdb 100644
  
  def create_steering_control(packer, apply_torque, frame, steer_on, lkas_max_torque):
 diff --git a/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py b/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py
-index 995fcd9..3d82b73 100644
+index 995fcd9..c3b81fa 100644
 --- a/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py
 +++ b/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py
 @@ -6,6 +6,7 @@ from opendbc.car import Bus, ButtonType, gen_empty_fingerprint, structs
@@ -261,6 +280,33 @@ index 995fcd9..3d82b73 100644
    assert alpha_long.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LONG_CONTROL
 +  assert not (alpha_long.safetyConfigs[-1].safetyParam & NissanSafetyFlags.LEAF_GW_LONG)
    assert CarInterface.get_pid_accel_limits(alpha_long, 0, 0) == (CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX)
+ 
+ 
+@@ -116,7 +130,7 @@ def test_disabled_alpha_long_controller_does_not_send_longitudinal_messages():
+ def test_alpha_long_controller_sends_stock_shaped_commands_and_keepalive(experimental_leaf_long):
+   can_sends = run_controller(True)
+ 
+-  assert can_sends[0x2B0][1].hex() == "ff6090ac5b000e03"
++  assert can_sends[0x2B0][1].hex() == "1f609eac5b000e03"  # accel 0 -> T 2528
+   assert can_sends[0x1C3][1].hex() == "000000006400ff27"
+   assert can_sends[0x707][1].hex() == "023e010000000000"
+   assert all(can_sends[addr][2] == 1 for addr in (0x2B0, 0x1C3))
+@@ -126,7 +140,7 @@ def test_alpha_long_controller_sends_stock_shaped_commands_and_keepalive(experim
+ def test_alpha_long_controller_clamps_to_panda_accel_limit(experimental_leaf_long):
+   can_sends = run_controller(True, accel=5.0)
+ 
+-  assert can_sends[0x2B0][1].hex() == "007f8fac5b000e0c"
++  assert can_sends[0x2B0][1].hex() == "1f708eac5b000e03"  # clamped to ACCEL_MAX -> T 2272
+ 
+ 
+ def test_alpha_long_controller_blends_friction_brake_below_regen_limit(experimental_leaf_long):
+@@ -134,7 +148,7 @@ def test_alpha_long_controller_blends_friction_brake_below_regen_limit(experimen
+ 
+   assert can_sends[0x2B0][1].hex() == "a827d5ac5b000e09"
+   brake = can_sends[0x1C3][1]
+-  assert ((brake[0] & 0x3F) << 4) | (brake[1] >> 4) == 264
++  assert ((brake[0] & 0x3F) << 4) | (brake[1] >> 4) == 322  # (PROPILOT_ACCEL_MIN - accel) * BRAKE_GAIN
+   assert brake[5] & 0x84 == 0x84
  
  
 @@ -262,3 +276,142 @@ def test_leaf_adas_restore_returns_to_kwp_default_session(monkeypatch):
@@ -327,8 +373,8 @@ index 995fcd9..3d82b73 100644
 +
 +
 +@pytest.mark.parametrize(("accel", "long_active", "accel_hex", "brake_hex"), [
-+  (0.0, True, "ff6090ac5b000e03", "000000006400ff27"),
-+  (5.0, True, "007f8fac5b000e0c", "000000006400ff27"),
++  (0.0, True, "1f609eac5b000e03", "000000006400ff27"),
++  (5.0, True, "1f708eac5b000e03", "000000006400ff27"),
 +  (1.0, False, "dc53a2ac1b000e03", "000000006400ff27"),
 +])
 +def test_leaf_gw_long_frames_match_silencing_mode_bytes(accel, long_active, accel_hex, brake_hex):
@@ -344,7 +390,7 @@ index 995fcd9..3d82b73 100644
 +
 +  assert can_sends[0x2B0][1].hex() == "a827d5ac5b000e09"
 +  brake = can_sends[0x1C3][1]
-+  assert ((brake[0] & 0x3F) << 4) | (brake[1] >> 4) == 264
++  assert ((brake[0] & 0x3F) << 4) | (brake[1] >> 4) == 322  # (PROPILOT_ACCEL_MIN - accel) * BRAKE_GAIN
 +  assert brake[5] & 0x84 == 0x84
 +  assert can_sends[0x1C3][2] == 2
 +
@@ -407,7 +453,7 @@ index 995fcd9..3d82b73 100644
 +    CP = CarInterface.get_params(CAR.NISSAN_LEAF, fingerprint, SUPPORTED_LEAF_FW, True, False, False, None)
 +    assert CP.safetyConfigs[-1].safetyParam == NissanSafetyFlags.LONG_CONTROL
 diff --git a/opendbc_repo/opendbc/car/nissan/tests/test_nissancan.py b/opendbc_repo/opendbc/car/nissan/tests/test_nissancan.py
-index cd19e2c..dd28f7c 100644
+index cd19e2c..6a2b8b9 100644
 --- a/opendbc_repo/opendbc/car/nissan/tests/test_nissancan.py
 +++ b/opendbc_repo/opendbc/car/nissan/tests/test_nissancan.py
 @@ -6,18 +6,19 @@ from opendbc.car.nissan import nissancan
@@ -415,12 +461,15 @@ index cd19e2c..dd28f7c 100644
    ("raw_command", "frame", "active", "expected"),
    [
 -    (5320, 0, False, "dc53a2ac1b000e03"),
-+    (5260, 0, False, "dc53a2ac1b000e03"),  # stock idle
-     (6144, 0, True, "ff6090ac5b000e03"),
-     (8191, 15, True, "007f8fac5b00fe0c"),
-     (4096, 0, True, "ff40b0ac5b000e03"),
+-    (6144, 0, True, "ff6090ac5b000e03"),
+-    (8191, 15, True, "007f8fac5b00fe0c"),
+-    (4096, 0, True, "ff40b0ac5b000e03"),
 -    (2518, 0, True, "a827d5ac5b000e09"),
-+    (2398, 0, True, "a827d5ac5b000e09"),  # stock friction-brake marker
++    (2595, 0, False, "dc53a2ac1b000e03"),  # stock idle
++    (2304, 0, True, "ff6090ac5b000e03"),  # stock cruise frame
++    (2272, 15, True, "1f708eac5b00fe03"),  # most acceleration
++    (2816, 0, True, "ff40b0ac5b000e03"),
++    (3415, 0, True, "a827d5ac5b000e09"),  # stock friction-brake marker
    ],
  )
 -def test_leaf_accel_command_vectors(raw_command, frame, active, expected):
@@ -435,7 +484,7 @@ index cd19e2c..dd28f7c 100644
    assert dat.hex() == expected
  
  
-@@ -29,10 +30,35 @@ def test_leaf_accel_command_vectors(raw_command, frame, active, expected):
+@@ -29,10 +30,50 @@ def test_leaf_accel_command_vectors(raw_command, frame, active, expected):
      (142, 2, True, True, "08e000006486ff95"),
    ],
  )
@@ -453,7 +502,7 @@ index cd19e2c..dd28f7c 100644
 +
 +
 +def test_leaf_command_default_bus_is_silencing_mode_bus():
-+  assert nissancan.create_accel_command(6144, 0, True).src == 1
++  assert nissancan.create_accel_command(2528, 0, True).src == 1
 +  assert nissancan.create_brake_command(0, 0, False, False).src == 1
 +  assert nissancan.LEAF_GW_LONG_BUS == 2
 +
@@ -463,29 +512,61 @@ index cd19e2c..dd28f7c 100644
 +  from opendbc.car.nissan.values import CarControllerParams
 +  assert nissancan.create_accel_command(CarControllerParams.PROPILOT_INACTIVE_RAW, 0, False).dat.hex() == "dc53a2ac1b000e03"
 +  assert nissancan.create_accel_command(CarControllerParams.PROPILOT_BRAKE_RAW, 0, True).dat.hex() == "a827d5ac5b000e09"
-+  assert nissancan.create_accel_command(6144, 0, True).dat.hex() == "ff6090ac5b000e03"
++  assert nissancan.create_accel_command(2304, 0, True).dat.hex() == "ff6090ac5b000e03"
 +
 +
-+def test_leaf_accel_command_nibble_layout():
-+  # V = raw12, I = ~V: byte0 = I & 0xFF, byte1 = V_hi:V_lo, byte2 = I_hi:V_mid
-+  for raw12 in range(0x1000):
-+    dat = nissancan.create_accel_command(raw12 * 4, 0, True).dat
-+    inverse = (~raw12) & 0xFFF
++def test_leaf_accel_command_layout():
++  # T (higher = more decel), I = ~T: byte0 = I & 0xFF, byte1 = I_hi:T_lo, byte2 = T >> 4, aux 2 only at the brake marker
++  from opendbc.car.nissan.values import CarControllerParams
++  for t in range(0x1000):
++    dat = nissancan.create_accel_command(t, 0, True).dat
++    inverse = (~t) & 0xFFF
++    aux = 2 if t == CarControllerParams.PROPILOT_BRAKE_RAW else 0
 +    assert dat[0] == inverse & 0xFF
-+    assert dat[1] == ((raw12 >> 8) << 4) | (raw12 & 0xF)
-+    assert dat[2] == ((inverse >> 8) << 4) | ((raw12 >> 4) & 0xF)
++    assert dat[1] == ((inverse >> 8) << 4) | (t & 0xF)
++    assert dat[2] == t >> 4
++    assert dat[7] == (aux << 2) | (~aux & 0x3)
++  # out-of-range commands clip to the 12-bit field
++  assert nissancan.create_accel_command(-5, 0, True).dat == nissancan.create_accel_command(0, 0, True).dat
++  assert nissancan.create_accel_command(9999, 0, True).dat == nissancan.create_accel_command(4095, 0, True).dat
++
++
++def test_leaf_accel_map_is_monotonic_decel_up():
++  import numpy as np
++  from opendbc.car.nissan.values import CarControllerParams as C
++  ts = [round(float(np.interp(a / 100, C.ACCEL_BP, C.T_BP))) for a in range(-78, 80)]
++  assert all(x >= y for x, y in zip(ts, ts[1:], strict=False))
++  assert ts[0] == C.T_BP[0] and ts[-1] == C.T_BP[-1]
++  assert round(float(np.interp(0.0, C.ACCEL_BP, C.T_BP))) == 2528
 diff --git a/opendbc_repo/opendbc/car/nissan/values.py b/opendbc_repo/opendbc/car/nissan/values.py
-index cb46c41..561eff1 100644
+index cb46c41..523ce5f 100644
 --- a/opendbc_repo/opendbc/car/nissan/values.py
 +++ b/opendbc_repo/opendbc/car/nissan/values.py
-@@ -31,8 +31,8 @@ class CarControllerParams:
-   PROPILOT_ACCEL_MAX = ACCEL_MAX
-   PROPILOT_ACCEL_OFFSET = 6144
-   PROPILOT_ACCEL_SCALE = 2048
+@@ -22,17 +22,17 @@ class CarControllerParams:
+   LKAS_MAX_TORQUE = 1               # A value of 1 is easy to overpower
+   STEER_THRESHOLD = 1.0
+ 
+-  # 2025 Leaf ProPILOT longitudinal command limits. The propulsion request has
+-  # 2048 counts per m/s^2 around a 6144-count zero point. Friction braking is
+-  # blended in below -1 m/s^2 using the stock pressure range seen in logs.
++  # Leaf ProPILOT longitudinal. 0x2B0 carries T, higher = more deceleration. The accel->T
++  # curve is the median of 37 stock Leafs' ICC logs (commaCarSegments, accel from wheel
++  # speed) -- PROVISIONAL until bench-tested. Friction braking (0x1C3) blends in below
++  # PROPILOT_ACCEL_MIN with StarPilot's (unverified) pressure gain.
+   ACCEL_MIN = -3.5
+-  ACCEL_MAX = 2047 / 2048
+-  PROPILOT_ACCEL_MIN = -1.0
+-  PROPILOT_ACCEL_MAX = ACCEL_MAX
+-  PROPILOT_ACCEL_OFFSET = 6144
+-  PROPILOT_ACCEL_SCALE = 2048
 -  PROPILOT_INACTIVE_RAW = 5320
 -  PROPILOT_BRAKE_RAW = 2518
-+  PROPILOT_INACTIVE_RAW = 5260  # stock idle frame dc53a2ac1b000e03
-+  PROPILOT_BRAKE_RAW = 2398     # stock friction-brake marker a827d5ac5b000e09
++  ACCEL_BP = [-0.78, -0.45, -0.11, -0.04, 0.0, 0.05, 0.09, 0.59, 0.79]
++  T_BP = [2784, 2720, 2656, 2592, 2528, 2464, 2400, 2336, 2272]
++  PROPILOT_ACCEL_MIN = ACCEL_BP[0]   # below this, friction brake
++  ACCEL_MAX = PROPILOT_ACCEL_MAX = ACCEL_BP[-1]
++  PROPILOT_INACTIVE_RAW = 2595  # stock idle frame dc53a2ac1b000e03
++  PROPILOT_BRAKE_RAW = 3415     # stock friction-brake marker a827d5ac5b000e09
    BRAKE_MAX = 659       # 0.5 pressure-count units; stock peak is 329.5
    BRAKE_GAIN = 264.0
  
@@ -500,7 +581,7 @@ index cb46c41..561eff1 100644
  
  class Footnote(Enum):
 diff --git a/opendbc_repo/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc b/opendbc_repo/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
-index 3376c37..72d7fe8 100644
+index 3376c37..1822998 100644
 --- a/opendbc_repo/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
 +++ b/opendbc_repo/opendbc/dbc/generator/nissan/nissan_leaf_2018.dbc
 @@ -59,4 +59,14 @@ BO_ 1549 DOORS_LIGHTS: 8 XXX
@@ -519,7 +600,7 @@ index 3376c37..72d7fe8 100644
 +
  VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;
 diff --git a/opendbc_repo/opendbc/dbc/nissan_leaf_2018_generated.dbc b/opendbc_repo/opendbc/dbc/nissan_leaf_2018_generated.dbc
-index e4dcabd..8820b11 100644
+index e4dcabd..84613ee 100644
 --- a/opendbc_repo/opendbc/dbc/nissan_leaf_2018_generated.dbc
 +++ b/opendbc_repo/opendbc/dbc/nissan_leaf_2018_generated.dbc
 @@ -181,4 +181,14 @@ BO_ 1549 DOORS_LIGHTS: 8 XXX
@@ -538,7 +619,7 @@ index e4dcabd..8820b11 100644
 +
  VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;
 diff --git a/opendbc_repo/opendbc/safety/modes/nissan.h b/opendbc_repo/opendbc/safety/modes/nissan.h
-index 45184d4..0b1b887 100644
+index 45184d4..dcdd9d7 100644
 --- a/opendbc_repo/opendbc/safety/modes/nissan.h
 +++ b/opendbc_repo/opendbc/safety/modes/nissan.h
 @@ -4,6 +4,8 @@
@@ -550,54 +631,68 @@ index 45184d4..0b1b887 100644
  static bool nissan_set_button_prev = false;
  static bool nissan_res_button_prev = false;
  
-@@ -107,7 +109,13 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
-     .min_accel = -2048,  // -1 m/s^2; stronger braking is checked in 0x1C3
-     .inactive_accel = 0,
-     .max_brake = 659,  // 0.5 pressure-count units
-+    // leaf-gw gateway mode: raw 0x2B0 command bounds the gateway firmware accepts
-+    .max_gas = 8191,       // 12-bit raw ceiling
-+    .min_gas = 2398,       // PROPILOT_BRAKE_RAW
-+    .inactive_gas = 5260,  // PROPILOT_INACTIVE_RAW
+@@ -102,12 +104,15 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
+   bool tx = true;
+   bool violation = false;
+ 
++  // 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
+   const LongitudinalLimits NISSAN_LONG_LIMITS = {
+-    .max_accel = 2047,   // just under +1 m/s^2, 1/2048 m/s^2
+-    .min_accel = -2048,  // -1 m/s^2; stronger braking is checked in 0x1C3
+-    .inactive_accel = 0,
+-    .max_brake = 659,  // 0.5 pressure-count units
++    .max_gas = 3415,       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
++    .min_gas = 2272,       // most acceleration openpilot may request (~+0.8 m/s^2)
++    .inactive_gas = 2595,  // PROPILOT_INACTIVE_RAW (stock idle frame)
++    .max_brake = 659,      // 0.5 pressure-count units
    };
 +  const bool nissan_long_tx = nissan_longitudinal || nissan_leaf_gw;
 +  const unsigned int nissan_long_bus = nissan_leaf_gw ? 2U : 1U;
  
    // steer cmd checks
    if (msg->addr == 0x169U) {
-@@ -128,9 +136,10 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
+@@ -128,34 +133,31 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
      violation |= ((msg->data[1] & 0x3dU) > 0U);
    }
  
 -  if (nissan_longitudinal && (msg->addr == 0x2b0U) && (msg->bus == 1U)) {
 -    int raw = (msg->data[1] << 4) | (msg->data[2] & 0xFU);
 -    int inverse = ((msg->data[2] >> 4) << 8) | ((msg->data[0] & 0xFU) << 4) | (msg->data[0] >> 4);
+-    int fraction = (msg->data[7] >> 2) & 0x3U;
+-    int raw_command = (raw * 4) + fraction;
 +  if (nissan_long_tx && (msg->addr == 0x2b0U) && (msg->bus == nissan_long_bus)) {
-+    // 12-bit value V: data[1] = V_hi:V_lo, data[2] low nibble = V_mid; inverse I: data[2] high nibble = I_hi, data[0] = I_mid:I_lo
-+    int raw = ((msg->data[1] >> 4) << 8) | ((msg->data[2] & 0xFU) << 4) | (msg->data[1] & 0xFU);
-+    int inverse = ((msg->data[2] >> 4) << 8) | msg->data[0];
-     int fraction = (msg->data[7] >> 2) & 0x3U;
-     int raw_command = (raw * 4) + fraction;
++    // 12-bit T (higher = more decel) = data[2] << 4 | data[1] low nibble; inverted copy in data[1] high nibble + data[0]
++    int t = (msg->data[2] << 4) | (msg->data[1] & 0xFU);
++    int inverse = ((msg->data[1] >> 4) << 8) | msg->data[0];
++    int aux = (msg->data[7] >> 2) & 0x3U;
      bool active = (msg->data[4] & 0x40U) != 0U;
-@@ -142,20 +151,23 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
++    bool brake_marker = t == NISSAN_LONG_LIMITS.max_gas;
  
-     int desired_accel = 0;
+-    violation |= inverse != ((~raw) & 0xFFF);
+-    violation |= msg->data[7] != (uint8_t)((fraction << 2) | ((~fraction) & 0x3));
++    violation |= inverse != ((~t) & 0xFFF);
++    violation |= msg->data[7] != (uint8_t)((aux << 2) | ((~aux) & 0x3));
++    violation |= aux != (brake_marker ? 2 : 0);  // stock pairs aux 2 with the brake marker only
+     violation |= (msg->data[3] != 0xACU) || ((msg->data[4] & 0xBFU) != 0x1BU) ||
+                  (msg->data[5] != 0U) || ((msg->data[6] & 0xFU) != 0xEU);
+ 
+-    int desired_accel = 0;
      if (active) {
 -      if (raw_command == 2518) {
-+      if (raw_command == 2398) {  // PROPILOT_BRAKE_RAW
-         desired_accel = NISSAN_LONG_LIMITS.min_accel;
-       } else {
-         violation |= (raw_command < 4096) || (raw_command > 8191);
-         desired_accel = raw_command - 6144;
-       }
+-        desired_accel = NISSAN_LONG_LIMITS.min_accel;
+-      } else {
+-        violation |= (raw_command < 4096) || (raw_command > 8191);
+-        desired_accel = raw_command - 6144;
+-      }
++      // the friction-brake marker, or a propulsion/regen request in the stock range
++      violation |= !brake_marker && ((t < NISSAN_LONG_LIMITS.min_gas) || (t > 3071));
      } else {
 -      violation |= raw_command != 5320;
-+      violation |= raw_command != 5260;  // PROPILOT_INACTIVE_RAW
++      violation |= t != NISSAN_LONG_LIMITS.inactive_gas;
      }
      violation |= active && !get_longitudinal_allowed();
-     violation |= longitudinal_accel_checks(desired_accel, NISSAN_LONG_LIMITS);
-+    if (nissan_leaf_gw) {
-+      violation |= longitudinal_gas_checks(raw_command, NISSAN_LONG_LIMITS);
-+    }
+-    violation |= longitudinal_accel_checks(desired_accel, NISSAN_LONG_LIMITS);
++    violation |= longitudinal_gas_checks(t, NISSAN_LONG_LIMITS);
    }
  
 -  if (nissan_longitudinal && (msg->addr == 0x1c3U) && (msg->bus == 1U)) {
@@ -605,7 +700,7 @@ index 45184d4..0b1b887 100644
      int brake_pressure = ((msg->data[0] & 0x3FU) << 4) | (msg->data[1] >> 4);
      bool brake_active = (msg->data[5] & 0x80U) != 0U;
      bool brake_mode = (msg->data[5] & 0x4U) != 0U;
-@@ -211,6 +223,19 @@ static safety_config nissan_init(uint16_t param) {
+@@ -211,6 +213,19 @@ static safety_config nissan_init(uint16_t param) {
      {0x707, 0, 8, .check_relay = false},  // Leaf ADAS ECU tester present
    };
  
@@ -625,7 +720,7 @@ index 45184d4..0b1b887 100644
    // Signals duplicated below due to the fact that these messages can come in on either CAN bus, depending on car model.
    static RxCheck nissan_rx_checks[] = {
      {.msg = {{0x2, 0, 5, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true},
-@@ -227,6 +252,24 @@ static safety_config nissan_init(uint16_t param) {
+@@ -227,6 +242,24 @@ static safety_config nissan_init(uint16_t param) {
               {0x1cc, 0, 4, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}}, // DOORS_LIGHTS / BRAKE
    };
  
@@ -650,7 +745,7 @@ index 45184d4..0b1b887 100644
    // The disabled Leaf ADAS ECU no longer publishes CRUISE_STATE. Longitudinal
    // mode enables from physical SET/RES buttons in CRUISE_THROTTLE instead.
    static RxCheck nissan_long_rx_checks[] = {
-@@ -241,15 +284,26 @@ static safety_config nissan_init(uint16_t param) {
+@@ -241,15 +274,26 @@ static safety_config nissan_init(uint16_t param) {
  
    nissan_alt_eps = GET_FLAG(param, NISSAN_PARAM_ALT_EPS_BUS);
    nissan_longitudinal = false;
@@ -694,7 +789,7 @@ index 70e9550..1e6e3b0 100644
            continue
          self.assertFalse(self._tx(msg), f"transmit of {addr=:#x} {bus=} from {test_name} during {current_test} was allowed")
 diff --git a/opendbc_repo/opendbc/safety/tests/test_nissan.py b/opendbc_repo/opendbc/safety/tests/test_nissan.py
-index 798274e..46a1471 100755
+index 798274e..2011eaa 100755
 --- a/opendbc_repo/opendbc/safety/tests/test_nissan.py
 +++ b/opendbc_repo/opendbc/safety/tests/test_nissan.py
 @@ -144,6 +144,9 @@ class TestNissanLeafSafety(TestNissanSafety):
@@ -733,26 +828,28 @@ index 798274e..46a1471 100755
  
    def _button_msg(self, main=True, set_button=False, res_button=False, cancel_button=False):
      values = {
-@@ -215,14 +218,14 @@ class TestNissanLeafLongSafety(TestNissanLeafSafety):
+@@ -215,23 +218,23 @@ class TestNissanLeafLongSafety(TestNissanLeafSafety):
  
    def test_accel_command_limits_and_inactive(self):
      self.safety.set_controls_allowed(False)
 -    self.assertTrue(self._tx(self._accel_msg(5320, active=False)))
 -    for raw_command in (4096, 6144, 8191, 2518):
-+    self.assertTrue(self._tx(self._accel_msg(5260, active=False)))
-+    for raw_command in (4096, 6144, 8191, 2398):
++    self.assertTrue(self._tx(self._accel_msg(2595, active=False)))
++    for raw_command in (2272, 2528, 3071, 3415):
        self.assertFalse(self._tx(self._accel_msg(raw_command)))
  
      self.safety.set_controls_allowed(True)
 -    for raw_command in (4096, 6144, 8191, 2518):
-+    for raw_command in (4096, 6144, 8191, 2398):
++    for raw_command in (2272, 2528, 3071, 3415):
        self.assertTrue(self._tx(self._accel_msg(raw_command)))
 -    for raw_command in (0, 2517, 2519, 4095, 8192, 0x3FFF):
-+    for raw_command in (0, 2397, 2399, 4095, 8192, 0x3FFF):
++    for raw_command in (0, 2271, 3072, 3414, 3416, 4095):
        self.assertFalse(self._tx(self._accel_msg(raw_command)))
  
    def test_accel_redundancy_and_constants(self):
-@@ -231,7 +234,7 @@ class TestNissanLeafLongSafety(TestNissanLeafSafety):
+     self.safety.set_controls_allowed(True)
+-    valid = self._accel_msg(6144)
++    valid = self._accel_msg(2528)
      for index in range(8):
        dat = bytearray(valid.data)
        dat[index] ^= 0x1
@@ -771,14 +868,15 @@ index 798274e..46a1471 100755
    def test_gas_override_blocks_longitudinal_commands(self):
      self.safety.set_controls_allowed(True)
      self._rx(self._user_gas_msg(self.GAS_PRESSED_THRESHOLD + 1))
-     self.assertFalse(self._tx(self._accel_msg(6144)))
+-    self.assertFalse(self._tx(self._accel_msg(6144)))
++    self.assertFalse(self._tx(self._accel_msg(2528)))
      self.assertFalse(self._tx(self._brake_msg(1)))
 -    self.assertTrue(self._tx(self._accel_msg(5320, active=False)))
-+    self.assertTrue(self._tx(self._accel_msg(5260, active=False)))
++    self.assertTrue(self._tx(self._accel_msg(2595, active=False)))
      self.assertTrue(self._tx(self._brake_msg(0, active=False, brake_mode=False)))
  
    def test_tester_present(self):
-@@ -269,5 +272,129 @@ class TestNissanLeafLongSafety(TestNissanLeafSafety):
+@@ -269,5 +272,136 @@ class TestNissanLeafLongSafety(TestNissanLeafSafety):
        self.assertFalse(self._tx(common.make_msg(0, 0x707, 8, dat)), index)
  
  
@@ -791,9 +889,9 @@ index 798274e..46a1471 100755
 +  LONG_BUS = 2
 +  TX_MSGS = [*TestNissanLeafSafety.TX_MSGS, [0x2B0, 2], [0x1C3, 2]]
 +
-+  MAX_GAS = 8191
-+  MIN_GAS = 2398
-+  INACTIVE_GAS = 5260
++  MAX_GAS = 3415  # brake marker, most decel
++  MIN_GAS = 2272  # most acceleration
++  INACTIVE_GAS = 2595
 +  MAX_BRAKE = 659
 +
 +  setUp = TestNissanLeafLongSafety.setUp
@@ -824,22 +922,22 @@ index 798274e..46a1471 100755
 +  def test_bus_1_commands_rejected(self):
 +    for controls_allowed in (False, True):
 +      self.safety.set_controls_allowed(controls_allowed)
-+      self.assertFalse(self._tx(self._accel_msg(5260, active=False, bus=1)))
-+      self.assertFalse(self._tx(self._accel_msg(6144, bus=1)))
++      self.assertFalse(self._tx(self._accel_msg(2595, active=False, bus=1)))
++      self.assertFalse(self._tx(self._accel_msg(2528, bus=1)))
 +      self.assertFalse(self._tx(self._brake_msg(0, active=False, brake_mode=False, bus=1)))
 +      self.assertFalse(self._tx(self._brake_msg(200, bus=1)))
 +
 +  def test_gas_sweep_bounded(self):
 +    # only the inactive value when disengaged; within [MIN_GAS, MAX_GAS] (and the
-+    # StarPilot command shape: brake-raw or 4096..8191) when engaged
++    # command shape: the brake marker or T 2272..3071) when engaged
 +    for controls_allowed in (False, True):
 +      self.safety.set_controls_allowed(controls_allowed)
-+      for raw_command in range(0, 0x4000, 7):
++      for raw_command in range(0x1000):
 +        for active in (False, True):
 +          if not active:
 +            should_tx = raw_command == self.INACTIVE_GAS
 +          else:
-+            should_tx = controls_allowed and (raw_command == self.MIN_GAS or 4096 <= raw_command <= self.MAX_GAS)
++            should_tx = controls_allowed and (raw_command == self.MAX_GAS or self.MIN_GAS <= raw_command <= 3071)
 +          self.assertEqual(should_tx, self._tx(self._accel_msg(raw_command, active=active)), (raw_command, active))
 +
 +  def test_brake_sweep_bounded(self):
@@ -887,6 +985,13 @@ index 798274e..46a1471 100755
 +      self._rx_stock_checks()
 +      self.assertTrue(self.safety.safety_config_valid(), param)
 +
++  def test_aux_only_with_brake_marker(self):
++    self.safety.set_controls_allowed(True)
++    for t, aux in ((2528, 2), (3415, 0)):
++      dat = bytearray(self._accel_msg(t).data)
++      dat[7] = (aux << 2) | (~aux & 0x3)
++      self.assertFalse(self._tx(common.make_msg(2, 0x2b0, 8, bytes(dat))), t)
++
 +  def test_stock_frames(self):
 +    # golden stock ZE1 frames decode to the limits: idle == inactive, brake marker == min
 +    self.safety.set_controls_allowed(False)
@@ -900,9 +1005,9 @@ index 798274e..46a1471 100755
 +    # car side never sets both; if it did, the silencing mode's bus-1 + 0x707 path wins
 +    self.safety.set_safety_hooks(CarParams.SafetyModel.nissan, NissanSafetyFlags.LONG_CONTROL | NissanSafetyFlags.LEAF_GW_LONG)
 +    self.safety.set_controls_allowed(True)
-+    self.assertFalse(self._tx(self._accel_msg(6144, bus=2)))
++    self.assertFalse(self._tx(self._accel_msg(2528, bus=2)))
 +    self.assertFalse(self._tx(self._brake_msg(200, bus=2)))
-+    self.assertTrue(self._tx(self._accel_msg(6144, bus=1)))
++    self.assertTrue(self._tx(self._accel_msg(2528, bus=1)))
 +    self.assertTrue(self._tx(self._make_msg(nissancan.create_leaf_adas_tester_present())))
 +
 +

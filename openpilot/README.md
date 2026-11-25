@@ -42,7 +42,7 @@ brake hold wins, so `autoResumeSng` stays off; resume with the stock button.
 
 - **`leaf_gw_long.py`** — dependency-free spec of the mapping + the two packers
   (`gateway_longitudinal`, `pack_accel`, `pack_brake`), mirroring what the patch
-  puts in `car/nissan`. StarPilot's 2025-SV-Plus calibration.
+  puts in `car/nissan`. 0x2B0 is T (higher = more decel); the accel→T curve is the 37-car fleet fit, provisional.
 - **`test_leaf_gw_long.py`** — standalone test: the accel mapping, and a
   pack→decode round-trip whose decoders mirror the firmware core (`leaf_gw.c`),
   proving the frames openpilot emits are valid and gateway-readable (checksum,

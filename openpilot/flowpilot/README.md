@@ -25,17 +25,17 @@ against the old APIs.
 ## Files
 
 - **`flowpilot-leaf-gw-long.patch`** applies at the flowpilot root and touches `selfdrive/car/nissan/`:
-  - `values.py`: `CarControllerParams` longitudinal constants (ACCEL_MIN -3.5, ACCEL_MAX 2047/2048, offset 6144, scale 2048, INACTIVE 5260, BRAKE_RAW 2398, BRAKE_MAX 659, BRAKE_GAIN 264).
-  - `nissancan.py`: `LEAF_LONG_BUS = 2`, `LEAF_GW_HEARTBEAT = 0x5FF`, and `create_accel_command` / `create_brake_command`. The bytes are identical to `leaf_gw_long.pack_accel` / `pack_brake`; the code returns this era's `[addr, 0, dat, bus]`.
-  - `carcontroller.py`: maps accel to (raw command, pressure) exactly as in the upstream patch, sends both frames every frame, and clips `actuators.accel` in the returned actuators.
+  - `values.py`: `CarControllerParams` longitudinal constants. `0x2B0` carries T = `(d2 << 4) | (d1 & 0xF)`, where higher T means more deceleration. The curve is `ACCEL_BP` = [-0.78, -0.45, -0.11, -0.04, 0.0, 0.05, 0.09, 0.59, 0.79] m/s² against `T_BP` = [2784, 2720, 2656, 2592, 2528, 2464, 2400, 2336, 2272], which is provisional: it is the median of stock Leaf logs, not bench-tested. `PROPILOT_ACCEL_MIN` = `ACCEL_BP[0]` and `ACCEL_MAX` = `ACCEL_BP[-1]`. The other constants are ACCEL_MIN -3.5, INACTIVE 2595, BRAKE_RAW (marker) 3415, BRAKE_MAX 659 and BRAKE_GAIN 264.
+  - `nissancan.py`: `LEAF_LONG_BUS = 2`, `LEAF_GW_HEARTBEAT = 0x5FF`, and `create_accel_command` / `create_brake_command`. The bytes are identical to `leaf_gw_long.pack_accel` / `pack_brake`: T is clipped to 0..4095, its inverse goes in `d1_hi:d0`, and aux is 2 only for the 3415 marker; the code returns this era's `[addr, 0, dat, bus]`.
+  - `carcontroller.py`: computes `T = round(interp(accel, ACCEL_BP, T_BP))`, or the 3415 marker in brake mode, and pressure = `round(max(0, PROPILOT_ACCEL_MIN - accel) * BRAKE_GAIN)`. This is exactly the upstream patch and `gateway_longitudinal`. It sends both frames every frame, and clips `actuators.accel` in the returned actuators.
   - `interface.py`: adds the opt-in (below), the heartbeat gate, `Panda.FLAG_NISSAN_LEAF_LONG` in `safetyParam`, and `get_pid_accel_limits`. It adds no ECU takeover and leaves `pcmCruise` True.
-  - `tests/test_leaf_gw.py` (new, 11 tests): the opt-in, heartbeat and `pcmCruise` gates; other Nissans unchanged; golden stock frames; pack/decode round-trip; the DBC heartbeat layout; the controller's frames when engaged, braking, stopped and disengaged; accel limits. `test_packers_match_spec` compares the packers exhaustively against `leaf_gw_long.py` when that file is copied into `selfdrive/car/nissan/`, and skips otherwise.
+  - `tests/test_leaf_gw.py` (new, 12 tests): the opt-in, heartbeat and `pcmCruise` gates; other Nissans unchanged; golden stock frames; pack/decode round-trip; the DBC heartbeat layout; the controller's T on the curve (higher T means more decel) and its frames when braking, stopped and disengaged; accel limits. Two tests need `leaf_gw_long.py` copied into `selfdrive/car/nissan/` and skip otherwise. `test_packers_match_spec` compares the packers byte for byte against the spec for every T in -8..4199, every frame counter and both active states. `test_controller_matches_spec` checks the controller's (T, pressure) against `gateway_longitudinal`.
 - **`panda.patch`** applies at the panda submodule root:
   - `board/safety/safety_nissan.h`:
     - Flags: `NISSAN_PARAM_ALT_EPS_BUS = 1`, `NISSAN_PARAM_LEAF_LONG = 2`. `GET_FLAG` replaces the old `param ? 1 : 0`, which would have read the new flag as alt-EPS.
     - LONG mode switches to its own TX list (adds `0x2b0` and `0x1c3` on bus 2) and its own addr-check list (adds `0x5ff` on bus 2, 20 ms / 50 Hz).
     - Explicit bounds use the tx hook's `longitudinal_allowed`, which is `get_longitudinal_allowed()`: controls allowed and gas not pressed. This panda has no `LongitudinalLimits` helpers.
-    - `0x2B0`: `raw12 = ((d1>>4)<<8)|((d2&0xF)<<4)|(d1&0xF)` and `command = raw12<<2 | (d7>>2)&3`. It must be 2398..8191 while longitudinal is allowed; otherwise only 5260 passes.
+    - `0x2B0`: `T = (d2<<4)|(d1&0xF)`. It must be 2272..3415 while longitudinal is allowed; otherwise only the idle value 2595 passes.
     - `0x1C3`: pressure must be <= 659, and 0 when longitudinal is not allowed.
   - `python/__init__.py`: `FLAG_NISSAN_ALT_EPS_BUS = 1` and `FLAG_NISSAN_LEAF_LONG = 2`.
   - `tests/safety/test_nissan.py`: new `TestNissanLeafLongSafety` class that subclasses the Leaf test, so every base test also runs in LONG mode. It adds gas and brake limits (engaged and disengaged), gateway bus only, golden stock frames, gas-pressed blocking, the heartbeat as an rx check (it lags and controls drop, and a heartbeat on bus 0 doesn't count), and no heartbeat needed without LONG. `tests/safety/common.py` adds the new class to the existing Nissan exception in `test_tx_hook_on_wrong_safety_mode`.
@@ -117,15 +117,17 @@ The panda firmware was built with leaf-gw's `nix develop .#panda` (gcc-arm-embed
 | `panda/tests/safety/` (all modes) | 972 passed, 435 skipped | **1000 passed, 438 skipped** |
 | `test_car_interfaces.py -k nissan` | 5 passed | 5 passed |
 | `test_car_interfaces.py` (all) | 149 passed, 7 failed | 149 passed, 7 failed (the same 7 Chrysler/Jeep cases, which fail before the patch: `chrysler_pacifica_2017_hybrid` is a generated DBC that is not committed) |
-| `selfdrive/car/nissan/tests/` | n/a (new) | 10 passed, 1 skipped (spec absent); **11 passed** with `leaf_gw_long.py` copied in |
+| `selfdrive/car/nissan/tests/` | n/a (new) | 10 passed, 2 skipped (spec absent); **12 passed** with `leaf_gw_long.py` copied in |
 | `test_leaf_gw_long.py` | passes | passes |
 | panda F4 + H7 firmware (`-Werror`) | n/a | builds and signs |
 
 Checks that the new tests catch the code they guard:
 
-- New panda tests on the old `safety_nissan.h`: 13 fail.
+- New panda tests on the original `safety_nissan.h`: 13 fail.
 - Heartbeat removed from the LONG addr checks: `test_gateway_heartbeat_required` fails.
+- `0x2B0` decoded with the wrong nibble order: 3 fail.
 - `longitudinal_allowed` dropped from the `0x2B0` bound: 3 fail.
+- Packer missing the marker's aux = 2: 4 car tests fail, including both spec comparisons.
 - Heartbeat gate dropped from `interface.py`: `test_long_needs_gateway_heartbeat` fails.
 
 ## Not run

@@ -17,13 +17,13 @@
 static int fails = 0;
 #define CHECK(c) do { if (!(c)) { printf("FAIL %s:%d  %s\n", __FILE__, __LINE__, #c); fails++; } } while (0)
 #define EQ(a,b)  do { long _a=(long)(a),_b=(long)(b); if (_a!=_b){printf("FAIL %s:%d  %s=%ld != %s=%ld\n",__FILE__,__LINE__,#a,_a,#b,_b); fails++; } } while (0)
-static int feq(float a, float b) { return fabsf(a - b) < 0.002f; }
 
-/* StarPilot golden vectors */
+/* golden vectors: stock ZE1 frames (public US route, SHIOKAZE's JDM e+) */
 static const uint8_t IDLE_1C3[8] = {0x00,0x00,0x00,0x00,0x64,0x00,0xFF,0x27};
-static const uint8_t A_2B0[8]    = {0xff,0x60,0x90,0xac,0x5b,0x00,0x0e,0x03}; /* cmd 6144, accel 0 */
-static const uint8_t B_2B0[8]    = {0x00,0x7f,0x8f,0xac,0x5b,0x00,0x0e,0x0c}; /* cmd 8191, ~+1 */
-static const uint8_t C_2B0[8]    = {0xa8,0x27,0xd5,0xac,0x5b,0x00,0x0e,0x09}; /* cmd 2398: stock friction-brake marker */
+static const uint8_t IDLE_2B0[8] = {0xdc,0x53,0xa2,0xac,0x1b,0x00,0x0e,0x03}; /* T 2595: idle / inactive */
+static const uint8_t PARK_2B0[8] = {0xdc,0x53,0xa2,0x8c,0x1b,0x00,0x0e,0x03}; /* same, byte-3 state 0x8c (Park) */
+static const uint8_t BRK_2B0[8]  = {0xa8,0x27,0xd5,0xac,0x5b,0x00,0x0e,0x09}; /* T 3415: friction-brake marker */
+static const uint8_t A_2B0[8]    = {0xff,0x60,0x90,0xac,0x5b,0x00,0x0e,0x03}; /* T 2304 (~+0.6 m/s^2) */
 
 static void test_1c3(void) {
     CHECK(leaf_1c3_valid(IDLE_1C3));
@@ -51,21 +51,28 @@ static void test_1c3(void) {
 }
 
 static void test_2b0(void) {
-    CHECK(leaf_2b0_valid(A_2B0)); EQ(leaf_2b0_command(A_2B0), 6144); CHECK(leaf_2b0_active(A_2B0)); CHECK(feq(leaf_2b0_accel(A_2B0), 0.0f));
-    CHECK(leaf_2b0_valid(B_2B0)); EQ(leaf_2b0_command(B_2B0), 8191); CHECK(feq(leaf_2b0_accel(B_2B0), (8191-6144)/2048.0f));
-    CHECK(leaf_2b0_valid(C_2B0)); EQ(leaf_2b0_command(C_2B0), 2398); CHECK(feq(leaf_2b0_accel(C_2B0), (2398-6144)/2048.0f));
+    CHECK(leaf_2b0_valid(IDLE_2B0)); EQ(leaf_2b0_command(IDLE_2B0), LEAF_2B0_IDLE); CHECK(!leaf_2b0_active(IDLE_2B0));
+    CHECK(leaf_2b0_valid(PARK_2B0)); EQ(leaf_2b0_command(PARK_2B0), LEAF_2B0_IDLE);
+    CHECK(leaf_2b0_valid(BRK_2B0));  EQ(leaf_2b0_command(BRK_2B0), LEAF_2B0_BRAKE); CHECK(leaf_2b0_active(BRK_2B0));
+    CHECK(leaf_2b0_valid(A_2B0));    EQ(leaf_2b0_command(A_2B0), 2304);
 
     uint8_t d[8];
-    leaf_2b0_encode(d, 6144, true, 0); CHECK(memcmp(d, A_2B0, 8) == 0);
-    leaf_2b0_encode(d, 8191, true, 0); CHECK(memcmp(d, B_2B0, 8) == 0);
-    leaf_2b0_encode(d, 2398, true, 0); CHECK(memcmp(d, C_2B0, 8) == 0);
-    /* consecutive frames from a stock ZE1 log (public route): +1 count apart */
-    static const uint8_t R1[8] = {0xf0,0x5f,0xa0,0xac,0x5b,0x00,0x0e,0x09};
-    static const uint8_t R2[8] = {0xef,0x50,0xa1,0xac,0x5b,0x00,0x1e,0x06};
-    CHECK(leaf_2b0_valid(R1)); CHECK(leaf_2b0_valid(R2));
-    EQ(leaf_2b0_command(R1), 0x50F * 4 + 2); EQ(leaf_2b0_command(R2), 0x510 * 4 + 1);
+    leaf_2b0_encode(d, LEAF_2B0_IDLE, false, 0);  CHECK(memcmp(d, IDLE_2B0, 8) == 0);
+    leaf_2b0_encode(d, LEAF_2B0_BRAKE, true, 0);  CHECK(memcmp(d, BRK_2B0, 8) == 0);
+    leaf_2b0_encode(d, 2304, true, 0);            CHECK(memcmp(d, A_2B0, 8) == 0);
 
-    for (int c = 0; c <= 8191; c += 257) {
+    /* consecutive stock frames stay a few counts apart, incl. across the 0x900
+     * boundary where the old V reading jumped ~510 (SHIOKAZE's vectors) */
+    static const uint8_t X[][8] = {
+        {0xfd,0x62,0x90,0xac,0x5b,0x00,0x5e,0x03}, {0x00,0x7f,0x8f,0xac,0x5b,0x00,0x6e,0x06},   /* 2306 -> 2303 */
+        {0x3f,0x60,0x9c,0xac,0x5b,0x00,0xae,0x06}, {0x42,0x6d,0x9b,0xac,0x5b,0x00,0xbe,0x03},   /* regen 2496 -> 2493 */
+        {0x45,0x6a,0x9b,0xac,0x5b,0x00,0xce,0x03}, {0x48,0x67,0x9b,0xac,0x5b,0x00,0xde,0x03},
+        {0x4b,0x64,0x9b,0xac,0x5b,0x00,0xee,0x03},                                               /* ... 2484 */
+    };
+    static const int XT[] = {2306, 2303, 2496, 2493, 2490, 2487, 2484};
+    for (unsigned i = 0; i < sizeof XT / sizeof XT[0]; i++) { CHECK(leaf_2b0_valid(X[i])); EQ(leaf_2b0_command(X[i]), XT[i]); }
+
+    for (int c = 0; c <= 4095; c += 37) {
         leaf_2b0_encode(d, c, true, 0);
         CHECK(leaf_2b0_valid(d));
         EQ(leaf_2b0_command(d), c);
@@ -91,24 +98,26 @@ static void test_mode(void) {
 static void test_arbitration(void) {
     /* passthrough: always the stock value, ignore op */
     EQ(leaf_arb_pressure(LEAF_PASSTHROUGH, 500, true, 0, false), 0);
-    EQ(leaf_arb_command(LEAF_PASSTHROUGH, 7000, true, 6144, false), 6144);
+    EQ(leaf_arb_command(LEAF_PASSTHROUGH, 2300, true, LEAF_2B0_IDLE, false), LEAF_2B0_IDLE);
 
-    /* engaged, stock idle: op gets its way (accel and comfort brake) */
-    EQ(leaf_arb_command(LEAF_ACTIVE, 7000, true, LEAF_ACCEL_ZERO, false), 7000);  /* op accel */
-    EQ(leaf_arb_command(LEAF_ACTIVE, 4000, true, LEAF_ACCEL_ZERO, false), 4000);  /* op brake */
+    /* engaged, stock idle/inactive: op gets its way (accel and regen) */
+    EQ(leaf_arb_command(LEAF_ACTIVE, 2300, true, LEAF_2B0_IDLE, false), 2300);   /* op accel */
+    EQ(leaf_arb_command(LEAF_ACTIVE, 2780, true, LEAF_2B0_IDLE, false), 2780);   /* op regen */
     EQ(leaf_arb_pressure(LEAF_ACTIVE, 50, true, 0, false), 50);
 
-    /* engaged, stock emergency braking HARDER than op: stock always wins */
-    EQ(leaf_arb_command(LEAF_ACTIVE, 6144, false, 2398, true), 2398);            /* AEB vs neutral op */
-    EQ(leaf_arb_command(LEAF_ACTIVE, 4000, true, 3000, true), 3000);            /* stock brakes harder */
-    EQ(leaf_arb_pressure(LEAF_ACTIVE, 50, true, 300, true), 300);              /* AEB pressure wins */
+    /* engaged, stock decelerating HARDER than op: stock always wins */
+    EQ(leaf_arb_command(LEAF_ACTIVE, 2300, false, LEAF_2B0_BRAKE, true), LEAF_2B0_BRAKE);  /* stock brakes vs idle op */
+    EQ(leaf_arb_command(LEAF_ACTIVE, 2300, true, LEAF_2B0_BRAKE, true), LEAF_2B0_BRAKE);   /* ... vs accelerating op */
+    EQ(leaf_arb_command(LEAF_ACTIVE, 2600, true, 2780, true), 2780);                       /* stock regens harder */
+    EQ(leaf_arb_pressure(LEAF_ACTIVE, 50, true, 300, true), 300);                          /* AEB pressure wins */
 
-    /* engaged, op brakes harder than a mild stock request: op wins */
-    EQ(leaf_arb_command(LEAF_ACTIVE, 3000, true, 5000, true), 3000);
+    /* engaged, op decelerates harder than a mild stock request: op wins */
+    EQ(leaf_arb_command(LEAF_ACTIVE, LEAF_2B0_BRAKE, true, 2600, true), LEAF_2B0_BRAKE);
     EQ(leaf_arb_pressure(LEAF_ACTIVE, 300, true, 50, true), 300);
 
-    /* engaged, stock active but at NEUTRAL (6144) must not block op accel */
-    EQ(leaf_arb_command(LEAF_ACTIVE, 7000, true, LEAF_ACCEL_ZERO, true), 7000);
+    /* engaged, stock active but accelerating / at ~0 must not block op */
+    EQ(leaf_arb_command(LEAF_ACTIVE, 2300, true, LEAF_2B0_ZERO, true), 2300);
+    EQ(leaf_arb_command(LEAF_ACTIVE, 2600, true, 2400, true), 2600);
 }
 
 static void test_engine(void) {
@@ -142,17 +151,27 @@ static void test_engine(void) {
     gw_set_op(&s, 1000, true, true, 200, false, 0);
     CHECK(gw_on_adas_frame(&s, 1100, LEAF_ID_BRAKE, IDLE_1C3, out) == GW_FORWARD);
 
-    /* engaged, op accel, stock 2B0 neutral -> substitute op command */
+    /* engaged, op accel, stock 2B0 idle in Park state -> substitute op command,
+     * keeping the stock byte-3 state field and counter */
     gw_init(&s, 50);
-    gw_set_op(&s, 1000, true, false, 0, true, 7000);
-    CHECK(gw_on_adas_frame(&s, 1000, LEAF_ID_ACCEL, A_2B0, out) == GW_SUBSTITUTE);
+    gw_set_op(&s, 1000, true, false, 0, true, 2300);
+    CHECK(gw_on_adas_frame(&s, 1000, LEAF_ID_ACCEL, PARK_2B0, out) == GW_SUBSTITUTE);
     CHECK(leaf_2b0_valid(out));
-    EQ(leaf_2b0_command(out), 7000);
+    EQ(leaf_2b0_command(out), 2300);
+    EQ(out[3], PARK_2B0[3]);
+    CHECK(leaf_2b0_active(out));
+    EQ(out[6] >> 4, PARK_2B0[6] >> 4);
+
+    /* engaged, stock friction-brake marker beats op accel -> forward stock untouched */
+    gw_init(&s, 50);
+    gw_set_op(&s, 1000, true, false, 0, true, 2300);
+    CHECK(gw_on_adas_frame(&s, 1000, LEAF_ID_ACCEL, BRK_2B0, out) == GW_FORWARD);
+    CHECK(memcmp(out, BRK_2B0, 8) == 0);
 
     /* a non-controlled frame always forwards, even engaged */
     uint8_t other[8] = {1,2,3,4,5,6,7,8};
     gw_init(&s, 50);
-    gw_set_op(&s, 1000, true, true, 200, true, 7000);
+    gw_set_op(&s, 1000, true, true, 200, true, 2300);
     CHECK(gw_on_adas_frame(&s, 1000, 0x355, other, out) == GW_FORWARD);
     CHECK(memcmp(out, other, 8) == 0);
 }
