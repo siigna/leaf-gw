@@ -89,6 +89,7 @@ the upstream patches don't apply there:
 | StarPilot | `StarPilotHQ/StarPilot` `StarPilot` `0b2061d` (vendored `opendbc_repo/`) | [`starpilot/`](starpilot/README.md) |
 | RetroPilot | `RetroPilot/openpilot` `c2` `b9a942ef` (openpilot 0.8.13 base; panda/opendbc submodules) | [`retropilot/`](retropilot/README.md) — `c2` hard-codes the RetroPilot retrofit fingerprint, so the Leaf isn't selected until that's reverted |
 | FlowPilot | `jagheterfredrik/flowpilot` `master` `9ea918ea` (openpilot on Android; the maintained fork, panda/opendbc vendored) | [`flowpilot/`](flowpilot/README.md) |
+| FlowPilot (phr00t) | `phr00t/flowpilot` `master` `84f25d06` (jagheterfredrik's base and the "tarball" install; older vendored panda) | [`phr00t/`](phr00t/README.md) |
 
 RetroPilot's tree predates the alpha-longitudinal toggle and panda's shared
 longitudinal helpers, so it opts in with its own `DisableRadar` param and writes

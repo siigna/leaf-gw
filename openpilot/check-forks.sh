@@ -31,6 +31,7 @@ FORKS=(
   "starpilot  StarPilotHQ/StarPilot StarPilot  0b2061d  starpilot  opendbc_repo"
   "retropilot RetroPilot/openpilot  c2         b9a942ef retropilot ."
   "flowpilot  jagheterfredrik/flowpilot master 9ea918ea flowpilot ."
+  "phr00t     phr00t/flowpilot      master     84f25d06 phr00t     ."
 )
 
 fail=0

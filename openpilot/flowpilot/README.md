@@ -116,9 +116,7 @@ Checks that the new tests catch the code they guard:
 
 ## phr00t/flowpilot master (`84f25d0`, 2024-06-09)
 
-The patch does **not** apply as is. The car side and DBC apply cleanly (`git apply --check --include='selfdrive/*' --include='opendbc/*'`). Every panda hunk fails, because jagheterfredrik replaced the vendored panda in its later commits ("pandaflash" through "finishing touches").
-
-phr00t's panda is the older generation: `AddrCheckStruct` / `addr_checks` rx checks, top-level `NISSAN_TX_MSGS`, and no `FLAG_NISSAN_*` in `panda/python`. It needs its own panda hunks. The car side would then work unchanged: it has the same `apply()` mismatch, `ExperimentalLongitudinalEnabled` and `sLogger` path. No suites were run there. No check-forks row was added; one would need that separate panda patch.
+This patch does not apply there: every panda hunk fails, because jagheterfredrik replaced the vendored panda after phr00t. phr00t has its own patch set in [`../phr00t/`](../phr00t/README.md), with its own check-forks row, `phr00t`.
 
 ## Deviations from upstream
 
