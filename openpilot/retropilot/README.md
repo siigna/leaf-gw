@@ -34,7 +34,7 @@ panda/opendbc commits are not in `commaai/*`.
 Each patch applies at its own repo root (`git apply` from a subdirectory skips
 files without saying so):
 
-```
+```sh
 cd openpilot           && git apply /path/to/retropilot/openpilot.patch
 cd openpilot/panda     && git apply /path/to/retropilot/panda.patch
 cd openpilot/opendbc   && git apply /path/to/retropilot/opendbc.patch
@@ -46,6 +46,7 @@ at the commits above. The suites below were run on that tree.
 ## What changes
 
 `openpilot.patch` (`selfdrive/car/nissan/`):
+
 - `values.py`: the longitudinal `CarControllerParams` constants, identical to
   `leaf_gw_long.py`:
   - `ACCEL_BP` and `T_BP`, the provisional accel→T curve;
@@ -132,6 +133,7 @@ at the commits above. The suites below were run on that tree.
     drive with jittered 5–30 ms steps, which does reach the fault path. Without that copy it skips.
 
 `panda.patch`:
+
 - `board/safety/safety_nissan.h`:
   - `NISSAN_PARAM_LEAF_LONG = 2` adds its own TX list (base plus `0x2B0`/`0x1C3`
     on bus 2) and its own rx checks (base plus `{0x5ff, 2, 8, expected_timestep = 20000U}`,
@@ -176,6 +178,7 @@ start unless `DisableRadar_Allow` is set. So it is off by default and needs two
 deliberate steps.
 
 Long is on only when all four of these hold:
+
 - the car is a Leaf or Leaf IC;
 - `0x5FF` is in `fingerprint.get(2, {})`;
 - `0x180` is in `fingerprint.get(0 if Leaf else 1, {})`;
@@ -272,7 +275,7 @@ envCython.Program("common/transformations/transformations.so", "common/transform
 
 Commands, from the openpilot root inside that shell:
 
-```
+```sh
 PY=$(command -v python3) scons -Q -C . -f /path/SConstruct --site-dir=$PWD/site_scons -j8
 scons -Q -C panda/tests/safety -f SConscript             # libpandasafety.so
 export HOME=$(mktemp -d) PYTHONPATH=$PWD
@@ -307,6 +310,7 @@ python3 -m pytest -q selfdrive/car/tests/test_car_interfaces.py -k NISSAN
 - MISRA: no new violations (cppcheck e1cff1d1, as `Dockerfile.panda` pins; `tests/misra/test_misra.sh` default and with `-DALLOW_DEBUG`).
 
 Not run:
+
 - Process replay and `test_models.py`. They need routes, and no Leaf route has
   the gateway.
 - `controlsd` end to end. The longitudinal MPC needs acados.

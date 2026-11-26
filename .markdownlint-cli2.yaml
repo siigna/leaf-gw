@@ -1,0 +1,7 @@
+# markdownlint for leaf-gw's docs: `nix flake check` runs it (check `markdown`).
+config:
+  default: true
+  MD013: false   # line length: tables, URLs and code can't wrap
+  MD060: false   # table pipe spacing: cosmetic
+ignores:
+  - "result/**"

@@ -246,13 +246,13 @@ bench step as pinning which V-CAN segment is panda bus 2.)
   only offers longitudinal when it sees it at startup, and panda drops control if
   it stops, so openpilot can't think it is driving when no gateway is inline.
 
-```
+```sh
 make test
 ```
 
 ## Nix
 
-```
+```sh
 nix flake check                 # C core + both Python suites + the Ocelot firmware build
 nix build                       # build + host-test the core
 nix build .#ocelot-firmware     # the signed panda/Ocelot image (leaf_gw.bin.signed, .elf, .bin)

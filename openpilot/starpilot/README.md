@@ -10,7 +10,7 @@ silencing mode is left as it is.
 - Paths are rooted at the StarPilot repo root. Apply from that root. Running
   `git apply` from inside `opendbc_repo/` skips every file and reports nothing.
 
-```
+```sh
 cd StarPilot
 git apply --check /path/to/starpilot-leaf-gw-long.patch
 git apply /path/to/starpilot-leaf-gw-long.patch
@@ -82,7 +82,7 @@ StarPilot treats `0x2B0` as a linear accel value: 2048 counts per m/s², 6144 = 
 plus 2 "fraction" bits in byte 7. SHIOKAZE's data, checked on 38 cars, shows the
 field is actually a 12-bit **T, where higher T means more deceleration**:
 
-```
+```text
 T = (data[2] << 4) | (data[1] & 0xF)            inverse = ((data[1] >> 4) << 8) | data[0] == ~T & 0xFFF
 byte0 = ~T & 0xFF   byte1 = (~T >> 8) << 4 | (T & 0xF)   byte2 = T >> 4
 byte3 0xAC   byte4 0x5B / 0x1B   byte5 0   byte6 counter << 4 | 0xE
@@ -111,6 +111,7 @@ The accel→T curve is the median of 37 stock Leafs' ICC logs, so it is
 unverified.
 
 **Panda, both modes.** These checks apply to silencing and gateway mode alike:
+
 - T decode and the inverse check, as above.
 - The aux self-check in byte 7, plus a new rule that aux is 2 only at the brake
   marker.
@@ -136,6 +137,7 @@ The brake limit stays at `max_brake = 659`.
 | `(8191, 15, True)` → `007f8fac5b00fe0c` | `(2272, 15, True)` → `1f708eac5b00fe03` | replaced: the old frame has aux 3, which the packer never sends |
 
 StarPilot's controller tests:
+
 - accel 0 (`test_alpha_long_controller_sends_stock_shaped_commands_and_keepalive`):
   `ff6090ac5b000e03` → **`1f609eac5b000e03`** (T 2528).
 - clamp (`test_alpha_long_controller_clamps_to_panda_accel_limit`, accel 5.0):
@@ -147,6 +149,7 @@ StarPilot's controller tests:
 The same three new values apply to the gateway-mode copies of these tests.
 
 Panda test literals:
+
 - allowed: (4096, 6144, 8191, 2398) → (2272, 2528, 3071, 3415).
 - rejected: (0, 2397, 2399, 4095, 8192, 0x3FFF) → (0, 2271, 3072, 3414, 3416, 4095).
 - inactive: 5260 → 2595.
@@ -234,6 +237,7 @@ new safety class, which inherits the stock Leaf class's skipped tests.
 MISRA: no new violations (cppcheck 2.18.3), checked both default and with -DALLOW_DEBUG.
 
 Follow-check tests, all run through the real `CarInterface.update`/`apply`:
+
 - The gate: 0x180 absent, or on the other harness's bus, for each Leaf.
 - A fault when the car slows less than asked, on both Leaf and Leaf IC.
 - No fault when the car follows, or slows more than asked.

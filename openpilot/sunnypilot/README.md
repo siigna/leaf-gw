@@ -9,7 +9,7 @@ combination (148480 cases).
 
 ## Apply
 
-```
+```sh
 cd opendbc                                   # sunnypilot fork, at 11c61f3e
 git apply /path/to/sunnypilot/nissan-longitudinal.patch
 git apply /path/to/sunnypilot/nissan-safety-longitudinal.patch   # its test needs the first patch
@@ -92,6 +92,7 @@ Run in `nix develop .#openpilot` with `PYTHONPATH=<opendbc root>`.
 
 Nothing failed before the patches. Two checks show the new tests catch real
 failures:
+
 - With the ICBM guard reverted, `test_icbm_buttons` fails for both Leafs with
   longitudinal on.
 - With the follow monitor disabled, `test_faults_when_car_slows_less_than_asked`

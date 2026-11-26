@@ -83,7 +83,7 @@ brake hold wins, so `autoResumeSng` stays off; resume with the stock button.
 
 ## Apply
 
-```
+```sh
 cd opendbc
 cp /path/to/leaf_gw_long.py test_leaf_gw_long.py opendbc/car/nissan/   # optional, for its test
 git apply /path/to/nissan-longitudinal.patch
@@ -123,7 +123,7 @@ sets up the tree, its pinned nix env and its tests.
 nissan suites; `--latest` tries each fork's branch head instead, to catch drift
 before bumping a pin:
 
-```
+```sh
 nix develop .#openpilot --command openpilot/check-forks.sh            # all, at pins
 nix develop .#openpilot --command openpilot/check-forks.sh --latest sunnypilot
 ```

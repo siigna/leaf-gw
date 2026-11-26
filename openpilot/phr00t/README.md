@@ -63,7 +63,7 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
   - It evaluates only when `vEgo > 2 and not gasPressed and not brakePressed`.
   - It skips while the brake marker is in the history or there is no feedback.
   - It faults when `hist[0] - feedback > TOL` for WINDOW frames, and latches until long goes inactive.
-  - The UI debug line appends ` FOLLOW FAULT` while latched.
+  - The UI debug line appends `FOLLOW FAULT` while latched.
 - **Tests:**
   - The 0x180 gate, on the right bus per harness.
   - End to end through `CarInterface.update`/`apply` with packed CAN (wheel speeds plus 0x180), for both Leaf and Leaf IC. The car acting on T 2528 while asked for 2730 faults; following (2730) or slowing more (2784 while asked 2528) never faults.
@@ -88,6 +88,7 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
    - It changes nothing on Python 3.10 and older. The wiki doesn't say which Python the tarball install runs; on 3.11+ this tree can't import `selfdrive.car` without the fix.
 
 Host-only, in `fork.sh` and `shell.nix` and not in the patch:
+
 - `common/path.py` hardcodes `BASEDIR` to the Android app dir, so a pytest plugin points it at the worktree.
 - `boardd_api_impl.pyx` declares `can_list_to_can_capnp_cpp`, which is `extern "C"` in the `.cc`, with a bare `cdef extern`. Cython 3 gives that C++ linkage, so the module fails to import (undefined symbol). `SConstruct.test` builds just that module with Cython 0.29.
 

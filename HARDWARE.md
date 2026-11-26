@@ -26,7 +26,7 @@ Our core (`leaf_gw` + `gw_engine`) ports onto it via `backends/panda/`
 
 A 2-CAN board (e.g. an ESP32-C6) is deliberately **not** supported as the
 interceptor: its two controllers are both consumed by the Chassis CAN cut (ADAS side
-+ chassis side), leaving none to tap V-CAN for the command — so the command
+and chassis side), leaving none to tap V-CAN for the command — so the command
 would have to ride a Chassis CAN segment, putting the comma electrically on the
 brake bus. A third CAN (to tap V-CAN) is the requirement, not a nicety.
 
@@ -87,6 +87,7 @@ The Nissan A harness has no 12 V wire; power the gateway from IGN.
 ### Before cutting
 
 On the uncut reference harness, with a meter in continuity mode:
+
 - ADAS pins 8/9 reach box pins 9/11; car-connector pins 8/9 reach box 8/7.
 - Plugged into a harness box, every ADAS pin is continuous to the same car pin.
 - Chassis CAN H–L resistance on each connector side, for the termination plan.
@@ -104,16 +105,18 @@ device; not done.
 
 ## The fail-open relay (mandatory before any on-car use)
 
-No off-the-shelf interceptor ships one — Ocelot included (BOM: F413 + 3×TJA1042
-+ LDO, no relay). On reset/brown-out/crash a hard-MITM board **stops** the bus;
+No off-the-shelf interceptor ships one, Ocelot included (BOM: F413, 3× TJA1042,
+LDO, no relay). On reset/brown-out/crash a hard-MITM board **stops** the bus;
 a brake bus must instead fall back to stock. So add a **normally-closed relay**
 on the Chassis CAN cut that:
+
 - connects ADAS ↔ chassis directly when de-energized (power loss / reset), and
 - is held open (MCU in circuit) only while powered, healthy, and watchdog-fed.
 
 Sources:
+
 - **RetroPilot OSHW Relay** ($40, often out of stock) — the openpilot harness
-  relay. Open design: https://github.com/lukasloetkolben/OpenpilotHardware .
+  relay. Open design: <https://github.com/lukasloetkolben/OpenpilotHardware> .
   Built for the comma harness (SBU-driven, one bus); confirm you can drive it
   from your own GPIO and place it on Chassis CAN, or build/adapt from the files.
 - Or a generic automotive **NC** relay / dual-SPDT, driven by an Ocelot GPIO

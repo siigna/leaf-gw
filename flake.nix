@@ -81,6 +81,13 @@
       checks = forAll (pkgs: {
         core = self.packages.${pkgs.system}.default;
 
+        # Markdown lint (config: .markdownlint-cli2.yaml).
+        markdown = pkgs.runCommand "leaf-gw-markdownlint" { nativeBuildInputs = [ pkgs.markdownlint-cli2 ]; } ''
+          cp -r ${./.} src && chmod -R u+w src && cd src
+          markdownlint-cli2 "**/*.md"
+          touch $out
+        '';
+
         iccan-validator = pkgs.runCommand "leaf-gw-iccan-validator-test" { } ''
           ${pkgs.python3}/bin/python3 ${./tools/leaf_iccan_check.py} --self-test
           touch $out

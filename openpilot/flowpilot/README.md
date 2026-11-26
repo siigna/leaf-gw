@@ -77,7 +77,7 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
   - It evaluates only when `vEgo > 2 and not gasPressed and not brakePressed`.
   - It skips while the brake marker is in the history or there is no feedback.
   - It faults when `hist[0] - feedback > TOL` for WINDOW frames, and latches until long goes inactive.
-  - The UI debug line appends ` FOLLOW FAULT` while latched.
+  - The UI debug line appends `FOLLOW FAULT` while latched.
 - **Tests:**
   - The 0x180 gate, on the right bus per harness.
   - End to end through `CarInterface.update`/`apply` with packed CAN (wheel speeds plus 0x180), for both Leaf and Leaf IC. The car acting on T 2528 while asked for 2730 faults; following (2730) or slowing more (2784 while asked 2528) never faults.
