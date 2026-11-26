@@ -28,13 +28,14 @@ keeps working.
 
 | | silencing mode (existing) | gateway mode (new) |
 |---|---|---|
-| enabled when | `LEAF_2025_SV_PLUS_ALPHA_LONG_ENABLED` (False) **and** `NISSAN_LEAF` **and** camera fw `6WK2CDB` | alpha-long toggle on `NISSAN_LEAF` / `NISSAN_LEAF_IC`, any firmware, **and** the gateway heartbeat `0x5FF` in `fingerprint[2]` |
+| enabled when | `LEAF_2025_SV_PLUS_ALPHA_LONG_ENABLED` (False) **and** `NISSAN_LEAF` **and** camera fw `6WK2CDB` | alpha-long toggle on `NISSAN_LEAF` / `NISSAN_LEAF_IC`, any firmware, **and** the gateway heartbeat `0x5FF` in `fingerprint[2]` **and** `0x180` in `fingerprint[0]` (Leaf) / `fingerprint[1]` (Leaf IC) |
 | safety flag | `LONG_CONTROL = 2` | `LEAF_GW_LONG = 4` |
 | frames | `0x2B0`/`0x1C3` on bus 1 | `0x2B0`/`0x1C3` on bus 2 |
 | ADAS ECU | KWP `10 C0` + `28 02`, tester present `0x707`, silence check, restore on deinit | untouched: no KWP, no `0x707`, no silence check |
 | engagement | openpilot reads SET/RES itself (`pcmCruise = False`), panda enables on button release | stock ProPILOT (`pcmCruise = True`), panda follows `CRUISE_STATE 0x30f`, like Toyota / Honda Nidec openpilot long |
-| panda RX checks | reduced set (no `0x30f`) | stock set **plus** `0x5FF` on bus 2 at 10 Hz. If the heartbeat stops, the RX checks go invalid and `controls_allowed` drops |
+| panda RX checks | reduced set (no `0x30f`) | stock set **plus** `0x5FF` on bus 2 at 50 Hz. If the heartbeat stops, the RX checks go invalid and `controls_allowed` drops |
 | `autoResumeSng` | True | False (stock cruise owns resume) |
+| follow check | none | `FollowMonitor` on `0x180`; a fault sets `accFaulted` |
 
 **Precedence.** The car side picks silencing mode only when the silencing mode
 itself is eligible. The heartbeat plays no part in that decision. Otherwise it
@@ -42,12 +43,34 @@ picks gateway mode, and only when the heartbeat is present. It never sets both
 flags. If panda gets both flags, it runs silencing mode and ignores the gateway
 flag. All of these rules are tested.
 
-**Heartbeat.** The gateway sends `0x5FF` on bus 2 at 10 Hz. Its bytes are `'L' 'G' 'W'
+**Heartbeat.** The gateway sends `0x5FF` on bus 2 at 50 Hz. Its bytes are `'L' 'G' 'W'
 0x01 status counter(4-bit) 0x00 checksum`, where checksum = `(0xFF + sum(bytes 0..6)) &
 0xFF`. The patch adds `BO_ 1535 LEAF_GW_HEARTBEAT` to
 `dbc/generator/nissan/nissan_leaf_2018.dbc` and to the vendored
 `nissan_leaf_2018_generated.dbc`. Running `generator.py` reproduces the generated
 file byte for byte.
+
+**Follow check (gateway mode only).** This mirrors upstream `FollowMonitor`. `0x180`
+(`PROPULSION_FEEDBACK.D`, signed 12-bit) follows the T the car is acting on about 160 ms
+later, as `D ≈ -0.796·T + 2067` (SHIOKAZE, 37 cars).
+
+- **Reading it.** `carstate.py` reads `D` from bus 0 on `NISSAN_LEAF` and from bus 1
+  on `NISSAN_LEAF_IC`. It converts it to `leaf_feedback = (2067.1 - D) / 0.796`. The
+  value is `None` when the frame is missing or its timestamp hasn't changed for more
+  than 5 updates. `ret.accFaulted` is set from the controller's result.
+- **The check.** `carcontroller.py` keeps the last 17 T values it sent. It counts a
+  bad frame when the T sent 16 frames ago (160 ms) minus `leaf_feedback` is above 60.
+  After 100 bad frames in a row (1 s) it faults.
+- **When it runs.** Only while `vEgo > 2` with neither pedal pressed, while feedback is
+  present, and while the brake marker is not in that history. Otherwise the bad-frame
+  count resets.
+- **Clearing.** A fault latches until long goes inactive.
+- **One-sided.** The car slowing *more* than asked is allowed: that is stock winning
+  the arbitration.
+- **Scope.** Silencing mode has no follow check and doesn't need `0x180`.
+
+The patch adds `BO_ 384 PROPULSION_FEEDBACK` (`SG_ D : 23|12@0-`) and its `CM_` to both
+DBC files. The generated file still matches the generator byte for byte.
 
 ## Correction to StarPilot's existing alpha: what 0x2B0 encodes
 
@@ -132,36 +155,40 @@ Panda test literals:
   - The T packer.
   - `create_accel_command` / `create_brake_command` take a `bus` argument (default 1,
     so existing callers don't change).
-  - Adds `LEAF_GW_LONG_BUS = 2` and `LEAF_GW_HEARTBEAT = 0x5FF`.
+  - Adds `LEAF_GW_LONG_BUS = 2`, `LEAF_GW_HEARTBEAT = 0x5FF` and `LEAF_FEEDBACK_ADDR = 0x180`.
 - `carcontroller.py`:
   - The interp map and the new pressure formula.
+  - `FollowMonitor`, fed with the T sent, in gateway mode only.
   - Leaf long covers both Leaf platforms.
   - Frames go on bus 2 in gateway mode, and the `0x707` keepalive goes out only in
     silencing mode.
   - The seatbelt-spoof cancel is now gated on `CP.pcmCruise`, so gateway mode can
     cancel stock cruise.
 - `interface.py`:
-  - Adds `is_leaf_gw_longitudinal(candidate, fingerprint, car_fw)` (the heartbeat gate)
-    and `is_leaf_adas_silencing(CP)`.
+  - Adds `is_leaf_gw_longitudinal(candidate, fingerprint, car_fw)` (the heartbeat
+    and `0x180` gate) and `is_leaf_adas_silencing(CP)`.
   - `init`/`deinit` (the KWP takeover and its restore) now run only when the
     `LONG_CONTROL` flag is set.
   - Accel limits now cover `NISSAN_LEAF_IC` as well.
-- `carstate.py`: the SET/RES engage events now also require `not CP.pcmCruise`, so
-  they only appear in silencing mode, as before.
+- `carstate.py`:
+  - The SET/RES engage events now also require `not CP.pcmCruise`, so they only
+    appear in silencing mode, as before.
+  - In gateway mode, reads `0x180` as `leaf_feedback` and sets `accFaulted`.
 - `safety/modes/nissan.h`:
   - The decode and bounds above.
   - Gateway mode uses its own TX list: base messages plus `0x2B0`/`0x1C3` on bus 2,
     without `0x707` and without bus 1.
-  - Gateway mode has its own RX checks: the stock set plus `{0x5ff, 2, 8, 10U}`, with
+  - Gateway mode has its own RX checks: the stock set plus `{0x5ff, 2, 8, 50U}`, with
     checksum, counter and quality ignored.
   - Like silencing mode, gateway mode only works in an `ALLOW_DEBUG` panda build.
-- `dbc/`: the heartbeat message.
+- `dbc/`: `LEAF_GW_HEARTBEAT` and `PROPULSION_FEEDBACK`.
 - Tests:
   - Car: the T layout over all 4096 values, clipping, a monotonic map with 0 → 2528,
     and stock golden frames. Also gateway params, the heartbeat gate (absent, or
     seen on bus 0 or 1 → no gateway mode), precedence, init/deinit never touching
     the ADAS, 200 controller frames on bus 2 with no `0x707`, `pcmCruise` True with
-    long, no button engage, and cancel.
+    long, no button engage, and cancel. The `0x180` gate and the follow check are
+    covered under Tests.
   - Safety, in a new `TestNissanLeafGwLongSafety`: the heartbeat is required and
     accepted only on bus 2, losing it drops control, and the other modes don't need
     it. Also stock golden frames, full T and brake sweeps, aux only at the marker,
@@ -191,14 +218,25 @@ does all of this.
 
 | suite | before (0b2061d) | after |
 |---|---|---|
-| `pytest opendbc/car/nissan/tests` | 29 passed | 69 passed |
+| `pytest opendbc/car/nissan/tests` | 29 passed | 80 passed |
 | `pytest opendbc/car/tests/test_car_interfaces.py -k nissan` | 5 passed | 5 passed |
 | `pytest opendbc/safety/tests/test_nissan.py` | 111 passed, 20 skipped | 152 passed, 25 skipped |
 | `test_leaf_gw_long.py` | pass | pass |
 
 `check-forks.sh starpilot` runs the safety and car-test directories together:
-221 passed, 25 skipped, then 5 passed, then PASS. The 5 extra skips come from the
+232 passed, 25 skipped, then 5 passed, then PASS. The 5 extra skips come from the
 new safety class, which inherits the stock Leaf class's skipped tests.
+
+Follow-check tests, all run through the real `CarInterface.update`/`apply`:
+- The gate: 0x180 absent, or on the other harness's bus, for each Leaf.
+- A fault when the car slows less than asked, on both Leaf and Leaf IC.
+- No fault when the car follows, or slows more than asked.
+- Skipped below 2 m/s, with no feedback, and while braking.
+- The fault latches until long goes inactive.
+
+With the monitor disabled (`CS.gw_follow_fault = False`), both fault tests fail
+(`2 failed, 4 passed` for `-k follow`). The quiet and skip tests pass either way,
+as they should.
 
 ## Open points
 

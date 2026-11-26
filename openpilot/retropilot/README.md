@@ -70,7 +70,24 @@ at the commits above. The suites below were run on that tree.
   as the spec's `_interp`. `CC.longActive` does not
   exist in 0.8.13, so it uses `c.active`. `actuatorsOutput.accel` is the clipped
   accel.
-- `interface.py`: the opt-in, the heartbeat gate, `FLAG_NISSAN_LEAF_LONG`, and
+- Follow check (`FollowMonitor` in `carcontroller.py`, as upstream):
+  - It is fed each frame with the T sent, `CS.leaf_feedback`, `c.active`, and
+    `evaluate = vEgo > 2 and not gasPressed and not brakePressed`.
+  - It faults when T from 16 frames (160 ms) ago minus the feedback T exceeds 60
+    for 100 frames in a row, i.e. the car slows less than asked.
+  - It skips while the brake marker is in the history, while not evaluating, and
+    when there is no feedback. A fault latches until long goes inactive.
+- `carstate.py`:
+  - With long on, `PROPULSION_FEEDBACK.D` is added (100 Hz check) to the bus-0
+    parser for the Leaf and to the bus-1 parser for the Leaf IC. Lateral-only
+    cars' parsers are unchanged.
+  - `leaf_feedback = (2067.1 - D) / 0.796`.
+  - This CANParser has no per-message timestamps, so a stale `0x180` shows up as
+    that parser's `can_valid` going False, and `leaf_feedback` is then None.
+- 0.8.13's `CarState` has no `accFaulted` field. `interface.update` instead adds
+  `EventName.accFaulted` when `CS.gw_follow_fault` is set. That is an
+  IMMEDIATE_DISABLE "Cruise Faulted" alert, the closest equivalent.
+- `interface.py`: the opt-in, the heartbeat and `0x180` gates, `FLAG_NISSAN_LEAF_LONG`, and
   `get_pid_accel_limits` of (-3.5, 0.79). `pcmCruise` stays at the default
   (True) and `autoResumeSng` is not touched. The Altima's literal
   `safetyParam = 1` became `Panda.FLAG_NISSAN_ALT_EPS_BUS`, with the same value.
@@ -80,7 +97,16 @@ at the commits above. The suites below were run on that tree.
   - that the other Nissans get no long;
   - the PID limits and the stock golden frames;
   - the controller's frames on bus 2, decoded;
-  - no frames without long.
+  - no frames without long;
+  - `0x180` required on the harness's bus (0 for Leaf, 1 for Leaf IC);
+  - `FollowMonitor`'s rules (lag, window, latch, reset, and each skip);
+  - end to end through `CarInterface.update`/`apply`, with real bus-0 CAN
+    including `0x180`:
+    - `accFaulted` fires when the car slows less than asked, after about 1.16 s;
+    - it does not fire when the car follows or slows more.
+
+  With `FollowMonitor.update` patched to always return False, the fault test
+  fails, so the test proves the monitor is what raises the event.
 
   When `leaf_gw_long.py` has been copied into `selfdrive/car/nissan/`, one more
   test compares every constant, the full packer input space, and the controller's
@@ -116,8 +142,9 @@ at the commits above. The suites below were run on that tree.
   `common.py` adds the class to the existing Nissan exception in
   `test_tx_hook_on_wrong_safety_mode`.
 
-`opendbc.patch`: `BO_ 1535 LEAF_GW_HEARTBEAT` in `nissan_leaf_2018.dbc`, with the
-same signals as upstream. This opendbc has no Nissan generator, so the DBC is
+`opendbc.patch`: `BO_ 384 PROPULSION_FEEDBACK` (`D : 23|12@0-`) and
+`BO_ 1535 LEAF_GW_HEARTBEAT` in `nissan_leaf_2018.dbc`, with the same signals and
+`CM_` comments as upstream. This opendbc has no Nissan generator, so the DBC is
 edited directly. The old `process_dbc` compiles it.
 
 ## Opt-in: `DisableRadar`, default off
@@ -129,9 +156,10 @@ param `DisableRadar`. Honda Bosch and Hyundai read it the same way, with
 start unless `DisableRadar_Allow` is set. So it is off by default and needs two
 deliberate steps.
 
-Long is on only when all three of these hold:
+Long is on only when all four of these hold:
 - the car is a Leaf or Leaf IC;
 - `0x5FF` is in `fingerprint.get(2, {})`;
+- `0x180` is in `fingerprint.get(0 if Leaf else 1, {})`;
 - `DisableRadar` is set.
 
 `get_params(candidate, fingerprint, car_fw)` has no flag argument in this
@@ -241,15 +269,16 @@ python3 -m pytest -q selfdrive/car/tests/test_car_interfaces.py -k NISSAN
 | `test_leaf_gw_long.py` (standalone) | pass | pass |
 | `panda/tests/safety/test_nissan.py` | 42 passed | 72 passed |
 | `panda/tests/safety` (all) | 537 passed, 240 skipped, 1 failed | 567 passed, 240 skipped, 1 failed |
-| `selfdrive/car/tests/test_nissan_leaf_gw.py` | n/a | 8 passed (7 + 1 skipped without the spec copy) |
+| `selfdrive/car/tests/test_nissan_leaf_gw.py` | n/a | 12 passed (11 + 1 skipped without the spec copy) |
 | `selfdrive/car/tests/test_car_interfaces.py` | 157 passed (5 NISSAN) | 157 passed (5 NISSAN) |
 
 - The one failure, in both columns, is `test_toyota.py::TestToyotaSafety::test_torque_measurements`.
   It is unrelated and was not investigated.
 - `openpilot/check-forks.sh retropilot` (via `fork.sh`) PASSes with these
   counts. With a deliberately wrong spec copy (`PROPILOT_INACTIVE_RAW = 2596`),
-  `fork.sh` exits 1: `test_leaf_gw_long.py` fails, and `test_nissan_leaf_gw.py`
-  gives 1 failed / 7 passed.
+  `fork.sh` exits 1: `test_leaf_gw_long.py` fails, and the spec cross-check in
+  `test_nissan_leaf_gw.py` fails. That run was before the follow check, when the
+  file had 8 tests.
 - The new tests fail on the old code (measured before the T-layout update). Run against the unpatched panda C (with only
   the test and flag files applied), `test_nissan.py` gives 15 failed / 57 passed.
   The inherited Leaf tests fail too, because the old `param ? 1 : 0` turns on

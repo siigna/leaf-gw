@@ -313,8 +313,9 @@ nothing has been transmitted to a car.
   2070 at correlation −0.999 (RMSE 1.1); the median segment's RMSE is 8, and it
   departs when something else (pedal, friction brake) drives the car. Whether it's
   the VCM's actual response or just a reflection of the request is open, but
-  since the comma can read it directly it's a candidate check that the car
-  follows what openpilot sent, i.e. that the gateway is really relaying.
+  since the comma can read it directly, the openpilot patches use it as a
+  follow check: if the car slows less than openpilot asked for 1 s, openpilot
+  disengages (see `openpilot/README.md`).
 - **Accel scale (provisional):** fitting acceleration measured from wheel speed to
   T during ICC, across the 37-car sample, gives correlation −0.76. Zero is near
   T ≈ 2530, about +0.8 m/s² at 2272 and −0.8 at 2784, flatter in between. The

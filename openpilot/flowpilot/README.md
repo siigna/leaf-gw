@@ -32,13 +32,13 @@ This is the upstream design (see [`..`](../README.md)) ported to FlowPilot, i.e.
     - `Panda.FLAG_NISSAN_LEAF_LONG` goes into `safetyParam`; also `stopAccel` -2.0 and `get_pid_accel_limits`.
     - `pcmCruise` stays True and `autoResumeSng` stays False. There is no ECU takeover.
     - It also fixes `apply()` (see below).
-  - `tests/test_leaf_gw.py` (new, 13 tests):
+  - `tests/test_leaf_gw.py` (new, 18 tests; the 0x180 follow-check tests are described below):
     - Gates: the experimental toggle, the heartbeat (absent, or on the wrong bus), and `pcmCruise`; other Nissans are unchanged.
     - Frames: golden stock frames, pack/decode round-trip for every T, the brake frame, and the DBC heartbeat layout.
     - Controller: T on the curve (higher T means more decel), and the frames when braking, stopped, disengaged, and with long off. Accel limits.
     - The UI debug line.
     - Spec checks: `test_packers_match_spec` compares byte for byte with `pack_accel` / `pack_brake` (T in -8..4199, all counters, both active states). `test_controller_matches_spec` checks (T, pressure) against `gateway_longitudinal`. Both skip unless `leaf_gw_long.py` is copied into `selfdrive/car/nissan/`; `fork.sh` copies it.
-  - `opendbc/nissan_leaf_2018.dbc`: `BO_ 1535 LEAF_GW_HEARTBEAT`, the same as upstream, at 50 Hz.
+  - `opendbc/nissan_leaf_2018.dbc`: `BO_ 1535 LEAF_GW_HEARTBEAT` (50 Hz) and `BO_ 384 PROPULSION_FEEDBACK`, the same as upstream.
   - `panda/board/safety/safety_nissan.h`: mirrors upstream `nissan.h`.
     - `NISSAN_LONG_LIMITS`: `max_gas` 3415, `min_gas` 2272, `inactive_gas` 2595, `max_brake` 659.
     - It uses the shared `longitudinal_gas_checks` / `longitudinal_brake_checks`. These go through `get_longitudinal_allowed()`, so they block when the driver presses the accelerator.
@@ -62,6 +62,29 @@ This is the upstream design (see [`..`](../README.md)) ported to FlowPilot, i.e.
 - **`SConstruct.test`**: builds `params_pyx`, `clock`, `simple_kalman_impl`, `transformations`, opendbc's `libdbc`/packer/parser, `messaging_pyx` (via `cereal/SConscript`) and `boardd_api_impl`. It is needed because the root SConstruct is Android-only, and `opendbc/can/SConscript` hard-links `-lpython3.11`.
 
 Run: `cd leaf-gw && openpilot/check-forks.sh flowpilot`. No outer dev shell is needed; `fork.sh` enters `shell.nix` itself.
+
+## Follow check (0x180)
+
+This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-sided check that the car actually follows what openpilot sent.
+
+- **DBC:** `BO_ 384 PROPULSION_FEEDBACK` (`SG_ D : 23|12@0-`) plus its `CM_`. The car reports the T it is acting on about 160 ms later: D ≈ -0.796·T + 2067.
+- **Gate:** `experimentalLongitudinalAvailable` also needs `LEAF_FEEDBACK_ADDR` (0x180) in `fingerprint[0]` (Leaf, Nissan A harness) or `fingerprint[1]` (Leaf IC).
+- **carstate:**
+  - Only when `openpilotLongitudinalControl` is on, `PROPULSION_FEEDBACK.D` is added to the bus-0 parser (Leaf) or the bus-1 parser (Leaf IC). Its check frequency is 0, so a missing 0x180 never affects `canValid`; lateral-only cars are unaffected.
+  - `leaf_feedback = (2067.1 - D) / 0.796`. It goes to None when `ts_nanos` hasn't changed for more than 5 updates.
+  - `ret.accFaulted = gw_follow_fault`. `create_common_events` turns that into `accFaulted`, which disengages.
+- **carcontroller:** `FollowMonitor` with LAG 16, TOL 60, WINDOW 100 (100 Hz), fed with the T actually sent.
+  - It evaluates only when `vEgo > 2 and not gasPressed and not brakePressed`.
+  - It skips while the brake marker is in the history or there is no feedback.
+  - It faults when `hist[0] - feedback > TOL` for WINDOW frames, and latches until long goes inactive.
+  - The UI debug line appends ` FOLLOW FAULT` while latched.
+- **Tests:**
+  - The 0x180 gate, on the right bus per harness.
+  - End to end through `CarInterface.update`/`apply` with packed CAN (wheel speeds plus 0x180), for both Leaf and Leaf IC. The car acting on T 2528 while asked for 2730 faults; following (2730) or slowing more (2784 while asked 2528) never faults.
+  - The latch is released when long goes inactive.
+  - `test_follow_monitor_matches_spec`: same constants, step-for-step identical to `leaf_gw_long.FollowMonitor`, and the DBC's D decodes like `feedback_t`.
+  - With the monitor disabled (fault never set), 3 tests fail.
+- **Rate:** controlsd runs once per boardd CAN packet, and boardd's `can_recv_thread` publishes at 100 Hz, so LAG/WINDOW are upstream's 100 Hz values.
 
 ## Things found in this tree and fixed in the patch
 
@@ -98,7 +121,7 @@ The test harness also needs one host-only shim, which lives in `fork.sh` and is 
 | `panda/tests/safety/` (all) | 1519 failed, 635 passed, 1010 skipped | 159 failed, 1889 passed, 1022 skipped (+128 subtests). The failures left are other brands' missing `*_generated` DBCs. The `common.py` fix alone gives 159 failed / 1858 passed. |
 | `test_car_interfaces.py -k nissan` | 5 failed (`apply` TypeError) | **5 passed** |
 | `test_car_interfaces.py` (all) | aborts (Hyundai `CarController.__init__`) | aborts the same way (pre-existing, not Nissan) |
-| `selfdrive/car/nissan/tests` | n/a (new) | 11 passed, 2 skipped (spec absent); **13 passed** with `leaf_gw_long.py` copied in |
+| `selfdrive/car/nissan/tests` | n/a (new) | 15 passed, 3 skipped (spec absent); **18 passed** with `leaf_gw_long.py` copied in |
 | `test_leaf_gw_long.py` | passes | passes |
 | panda F4 + H7 firmware (leaf-gw `.#panda` shell) | n/a | builds and signs. One test-only flag is needed, `-Wno-error=unterminated-string-initialization`, because `board/obj/gitversion.h` trips gcc 15; this is pre-existing and not in the patch. |
 
@@ -113,6 +136,7 @@ Checks that the new tests catch the code they guard:
 | `0x2B0` decoded with the wrong nibble order | 3 |
 | Heartbeat gate in `interface.py` turned into `or` | 2 |
 | Debug line removed | 1 (`test_ui_debug_line`) |
+| Follow monitor disabled | 3 |
 
 ## phr00t/flowpilot master (`84f25d0`, 2024-06-09)
 

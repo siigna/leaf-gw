@@ -37,6 +37,51 @@ def heartbeat_valid(d):
   return len(d) == 8 and bytes(d[:3]) == b"LGW" and d[3] == 1 and d[6] == 0 and d[7] == (0xFF + sum(d[:7])) & 0xFF
 
 
+# 0x180 follows T about 160 ms later: D = signed 12-bit (b2 << 4 | b3 >> 4),
+# D ~= -0.796 * T + 2067.1 (SHIOKAZE; corr -0.999 on the 37-car fleet). Panda bus 0
+# on the Nissan A harness, bus 1 on the IC harness.
+LEAF_FEEDBACK_ADDR = 0x180
+FOLLOW_LAG_FRAMES = 16      # 160 ms at the 100 Hz controller rate
+FOLLOW_TOL = 60             # T counts; fleet p99.9 residual is 61, max-over-1-s 0 trips
+FOLLOW_WINDOW = 100         # 1 s sustained before faulting
+
+
+def feedback_t(d):
+  """T the car is acting on, from a 0x180 frame."""
+  v = (d[2] << 4) | (d[3] >> 4)
+  v = v - 4096 if v & 0x800 else v
+  return (2067.1 - v) / 0.796
+
+
+class FollowMonitor:
+  """One-sided check that the car follows what openpilot sent through the gateway.
+
+  Faults when the car is slowing LESS than openpilot asked (T from 160 ms ago minus
+  the feedback T > FOLLOW_TOL) for FOLLOW_WINDOW frames: the gateway isn't relaying,
+  or the car isn't obeying. Slowing MORE than asked is allowed: that's stock winning
+  the arbitration, which is the point. Latches until longitudinal goes inactive."""
+
+  def __init__(self):
+    self.hist = []
+    self.bad = 0
+    self.fault = False
+
+  def update(self, op_t, feedback, active, evaluate):
+    if not active:
+      self.hist, self.bad, self.fault = [], 0, False
+      return False
+    self.hist = (self.hist + [op_t])[-(FOLLOW_LAG_FRAMES + 1):]
+    lagged = self.hist[0]
+    if (not evaluate or feedback is None or len(self.hist) <= FOLLOW_LAG_FRAMES or
+        PROPILOT_BRAKE_RAW in self.hist):
+      self.bad = 0
+      return self.fault
+    self.bad = self.bad + 1 if lagged - feedback > FOLLOW_TOL else 0
+    if self.bad >= FOLLOW_WINDOW:
+      self.fault = True
+    return self.fault
+
+
 def _clip(v, lo, hi):
   return lo if v < lo else hi if v > hi else v
 

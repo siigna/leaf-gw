@@ -36,7 +36,7 @@ EOF
   echo "$(tail -1 <<<"$out")   [test_leaf_gw_long.py]"
   for t in panda/tests/safety/test_nissan.py "selfdrive/car/tests/test_car_interfaces.py -k nissan" selfdrive/car/nissan/tests; do
     out=$(cd "$wt" && python3 -m pytest -q -p no:cacheprovider -p leafgw_hostroot $t 2>&1) || ok=1
-    echo "$(tail -1 <<<"$out")   [$t]"
+    echo "$(grep -E " (passed|failed|error)" <<<"$out" | tail -1)   [$t]"   # C code (libpanda, CANParser) prints after the summary
   done
   rm -rf "$tmp"
   exit $ok

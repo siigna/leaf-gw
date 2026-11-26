@@ -2,7 +2,7 @@
 
 The `../nissan-*.patch` files target upstream commaai/opendbc. These two target
 **sunnypilot/opendbc `11c61f3e`** (master, "HKG: Car Port for Kia Carnival 2027").
-They produce the same frames, safety bounds and gateway heartbeat gate as upstream.
+They produce the same frames, safety bounds, gateway heartbeat gate and follow check as upstream.
 `nissancan` packs byte-identical frames to `../leaf_gw_long.py`. That was checked
 over T -16..4111 (to exercise the clip), every pressure, frame counter and flag
 combination (148480 cases).
@@ -42,6 +42,24 @@ them to a fresh worktree at the pin and runs the suites; the result is PASS.
   its rx checks, so a missing or silent gateway invalidates them and control
   stops. The message is in `generator/nissan/nissan_leaf_2018.dbc`, the same as
   upstream.
+- **Follow check (0x180).** `0x180` `PROPULSION_FEEDBACK` (in the DBC) reports
+  the T the car is acting on, about 160 ms after the request:
+  `D ~= -0.796 * T + 2067`.
+  - **Gate.** Longitudinal is offered only when 0x180 is in the fingerprint on
+    panda bus 0 (Leaf, Nissan A harness) or bus 1 (Leaf IC). The heartbeat on bus
+    2 is still required as well.
+  - **CarState.** Reads `D`, from the bus 0 parser for the Leaf and the bus 1
+    parser for the Leaf IC. A frame unchanged for more than 5 updates counts as
+    stale and is ignored. `leaf_feedback = (2067.1 - D) / 0.796`, and
+    `ret.accFaulted` (the standard CarState field) mirrors the controller's result.
+  - **CarController.** `FollowMonitor` (LAG 16, TOL 60, WINDOW 100) is the same
+    logic as `leaf_gw_long.FollowMonitor`; a randomized comparison found them
+    identical. It faults when the car slows less than asked
+    (`T sent 160 ms ago - feedback > 60`) for 1 s straight. It does not evaluate
+    while the brake marker is in its history, below 2 m/s, with gas or brake
+    pressed, or without feedback. Once faulted it stays faulted until
+    longitudinal goes inactive. Slowing more than asked is allowed, since that
+    is stock winning the arbitration.
 - **Engagement.** `pcmCruise` stays True and `autoResumeSng` stays False, as in
   upstream and following the Toyota / Honda Nidec precedent:
   - The driver engages stock ProPILOT ICC, which puts `0x30f` in
@@ -60,14 +78,18 @@ Run in `nix develop .#openpilot` with `PYTHONPATH=<opendbc root>`.
 | suite | before (11c61f3e) | after |
 |---|---|---|
 | `python3 opendbc/car/nissan/test_leaf_gw_long.py` | n/a | passes |
-| `pytest opendbc/sunnypilot/car/nissan/test_nissan.py` (new) | n/a | 6 passed, 26 subtests |
+| `pytest opendbc/sunnypilot/car/nissan/test_nissan.py` (new) | n/a | 9 passed, 34 subtests |
 | `pytest opendbc/car/tests/test_car_interfaces.py -k nissan` | 5 passed | 5 passed |
 | `pytest opendbc/safety/tests/test_nissan.py` | 171 passed, 27 skipped | 235 passed, 36 skipped |
 | `pytest opendbc/safety/tests -k wrong_safety_mode` (all brands) | 132 passed, 37 skipped | 133 passed, 37 skipped |
 | `pytest opendbc/can/tests` (DBC touched) | — | 49 passed |
 
-Nothing failed before the patches. With the ICBM guard reverted, the new
-`test_icbm_buttons` fails for both Leafs with longitudinal on.
+Nothing failed before the patches. Two checks show the new tests catch real
+failures:
+- With the ICBM guard reverted, `test_icbm_buttons` fails for both Leafs with
+  longitudinal on.
+- With the follow monitor disabled, `test_faults_when_car_slows_less_than_asked`
+  fails for both Leafs.
 
 ## How it differs from upstream
 
@@ -104,8 +126,13 @@ Nothing failed before the patches. With the ICBM guard reverted, the new
   - the params for every Nissan with alpha_long on and off: `pcmCruise` True,
     `autoResumeSng` False, LONG flag and ICBM availability;
   - the heartbeat gate (absent, bus 0, bus 1);
+  - the 0x180 gate (absent, or on the other harness's bus);
   - the golden stock `0x2B0` frames (2304, 2595 and 3415);
   - direct CarController runs with long on: accel 0 gives T 2528 with no friction
     brake; accel -2 gives the brake marker with pressure 322; both go out on bus 2;
   - no long frames without the toggle;
-  - the ICBM guard.
+  - the ICBM guard;
+  - the follow check end to end, through the real CarInterface fed
+    `WHEEL_SPEEDS_*` and `PROPULSION_FEEDBACK` at 10 m/s, for both Leafs. It
+    faults about 1.2 s after the car starts slowing less than asked, and stays
+    quiet when the car follows or slows more.

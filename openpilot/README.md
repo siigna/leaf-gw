@@ -27,6 +27,26 @@ gates use it:
 - panda (`nissan.h`): in LONG mode the heartbeat is an rx check. If it stops for
   ~1 s, the rx checks go invalid and `controls_allowed` drops.
 
+## Follow check (0x180)
+
+The heartbeat proves a gateway is installed. The follow check proves the car is
+doing what openpilot sent. `0x180` follows the `0x2B0` T about 160 ms later
+(D ≈ −0.796·T + 2067, SHIOKAZE; corr −0.999 on the 37-car fleet), and the comma
+reads it directly (bus 0 on the Nissan A harness, bus 1 on IC).
+
+`FollowMonitor` in the car controller compares the T it sent 160 ms ago with the
+T the car is acting on. If the car is slowing **less** than openpilot asked by
+more than 60 counts for 1 s, it sets `accFaulted`, which disengages immediately,
+and stays faulted until longitudinal goes inactive. Slowing **more** than asked
+is allowed: that's stock winning the arbitration, which is the point of the
+gateway. It isn't checked below 2 m/s, with a pedal pressed, or around the brake
+marker. On 37 stock Leafs, a perfectly relaying gateway would never trip it
+(0 of 127 segments; p99.9 residual 61 counts).
+
+It can only catch a dead gateway when openpilot asks for more slowing than stock
+does; when openpilot asks for less, a dead gateway leaves the car more cautious,
+which is safe. Longitudinal is only offered when `0x180` is in the fingerprint.
+
 ## Engagement
 
 `pcmCruise` stays True, as on Toyota and Honda Nidec openpilot longitudinal: you

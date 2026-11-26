@@ -57,6 +57,30 @@ def main():
   hb = bytes([0x4C, 0x47, 0x57, 1, 3, 5, 0, 0xF2])
   assert L.heartbeat_valid(hb) and not L.heartbeat_valid(hb[:7] + b"\x00")
 
+  # 0x180 feedback decode: D for T=2528 per the model is -0.796*2528+2067.1 ~= 54.8 -> raw 55
+  fb = bytes([0, 0, (55 >> 4) & 0xFF, (55 & 0xF) << 4, 0, 0, 0, 0])
+  assert abs(L.feedback_t(fb) - 2527.8) < 0.5
+  neg = (-100) & 0xFFF
+  assert abs(L.feedback_t(bytes([0, 0, neg >> 4, (neg & 0xF) << 4, 0, 0, 0, 0])) - (2067.1 + 100) / 0.796) < 0.01
+
+  # follow monitor: car tracks op -> no fault; car slows less than asked -> fault after 1 s;
+  # car slows MORE than asked (stock winning) -> no fault; brake marker / not evaluating -> no fault
+  def run(op, car, n, evaluate=True, mon=None):
+    mon = mon or L.FollowMonitor()
+    for _ in range(n):
+      f = mon.update(op, car, True, evaluate)
+    return f, mon
+  assert not run(2600, 2600, 500)[0]
+  assert not run(2600, 2600 - L.FOLLOW_TOL, 500)[0]
+  assert run(2700, 2600, L.FOLLOW_LAG_FRAMES + L.FOLLOW_WINDOW + 1)[0]
+  assert not run(2700, 2600, L.FOLLOW_LAG_FRAMES + L.FOLLOW_WINDOW - 1)[0]
+  assert not run(2500, 2800, 500)[0]
+  assert not run(2700, 2600, 500, evaluate=False)[0]
+  assert not run(L.PROPILOT_BRAKE_RAW, 2600, 500)[0]
+  f, mon = run(2700, 2600, 300)
+  assert f and mon.update(2700, 2700, True, True)      # latched while active
+  assert not mon.update(2700, 2700, False, True)       # cleared when long goes inactive
+
   # pack -> decode round-trip across the whole range; frames must be gateway-valid
   for accel, la, stop, v, ves in sweep():
     cmd, pr, active, bmode = L.gateway_longitudinal(accel, la, stop, v, ves)
