@@ -194,3 +194,9 @@ all pass before any order:
    checks in CI.
 4. Fab outputs, a first order of about 5 assembled boards.
 5. Bring-up: firmware pin-map port, bench tests from `HARDWARE.md`.
+6. Enclosure: a 3D-printed case generated from the board's STEP export
+   (CadQuery or OpenSCAD in nix), with cutouts for both headers, USB-C and the
+   LEDs, standoffs on the mounting holes, and checks for board/case
+   interference, minimum wall thickness and connector clearance. Print in ASA or
+   PETG, not PLA: a cabin behind the windshield gets hotter than PLA's ~55 °C
+   softening point, and the relay is only rated to +70 °C.
