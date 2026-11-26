@@ -144,7 +144,7 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
   top side. Convert it to a footprint by script: flatten the curves to polygons
   and keyhole the holes, since KiCad graphic polygons can't have holes. Keep
   every line and gap at least 0.15 mm (JLCPCB's silkscreen minimum).
-- Plain silkscreen text beside it: `ESCargot leaf-gw`, the board revision, and
+- Plain silkscreen text beside it: `leaf-gw`, the board revision, and
   `© 2026 Stephen Bouche · MIT`.
 - The full wordmark and lockup aren't used: their thin script letters break up
   at this size.
