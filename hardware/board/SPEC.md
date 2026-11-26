@@ -1,0 +1,171 @@
+# leaf-gw board: spec
+
+An inline module that plugs in between comma's Nissan A car-harness cable and
+the stock harness box, and puts the leaf-gw gateway on Chassis CAN without
+cutting anything.
+
+```text
+car-harness cable ──18-pin──▶ [ leaf-gw board ] ──18-pin──▶ stock harness box ──OBD-C──▶ comma
+```
+
+> Bench and a dedicated test car only. This board sits on the brake path. The
+> fail-open relay and its gating below are the safety design; don't change them
+> without re-reading this file.
+
+## Requirements
+
+1. **Unpowered, reset or crashed = stock.** With no power, a held reset, a hung
+   firmware or a tripped watchdog, Chassis CAN's two halves are joined by relay
+   contacts and every other pin passes straight through. The car and the comma
+   behave exactly as if the board weren't there.
+2. **Firmware compatible.** Same MCU and the same pins as the RetroPilot Ocelot
+   gateway (`firmware/boards/gateway.h`), so `backends/panda/gw_panda.c` runs
+   with no more than a pin-map change.
+3. **No car or harness modification.** Both 18-pin sides use the connector system
+   comma's harness uses.
+4. **Assembled by the board house.** Every part on the board is available for
+   JLCPCB assembly (LCSC part numbers in the BOM); hand work is limited to
+   plugging in cables.
+5. **Checked in CI.** ERC, DRC, schematic/PCB parity, the safety-net checks below
+   and fab outputs all run in `nix flake check`.
+
+## The 18-pin connector
+
+From comma's open drawings ([Nissan A harness](https://github.com/commaai/hardware/blob/master/harness/v3/Nissan_A_Harness.pdf),
+[box pinout](https://github.com/commaai/hardware/blob/master/harness/v3/open_pinout.pdf)).
+Connector: Molex 501646-1800 (cable side), crimp 501647-1000. The mating board
+header and how the board connects to the box are to be confirmed from Molex's
+datasheets in the schematic phase.
+
+| pin | signal | on this board |
+|---|---|---|
+| 1, 17 | GND | through; board ground |
+| 2, 14 | IGN | through; board power input |
+| 3, 5 | bus-0 termination loopback | through (the box's jumper) |
+| 13, 15 | bus-2 termination loopback | through |
+| 4 / 6 | CAN0_H / CAN0_L (V-CAN, car side) | through |
+| 16 / 18 | CAN2_H / CAN2_L (V-CAN, ADAS side) | through, **tapped** by transceiver 3 |
+| 9 / 11 | CAN1_H / CAN1_L, ADAS side (from the cable) | **to transceiver 1**, and relay common |
+| 8 / 7 | CAN1_H / CAN1_L, car side (from the cable) | **to transceiver 2**, relay NC, and through to the box's 8 / 7 |
+| 10, 12 | 12VIN | through (not wired on the Nissan A harness) |
+
+On the box side, pins 9 / 11 are left unconnected: the box would otherwise join
+them to 8 / 7 and short around the gateway. The comma's bus 1 then sees Chassis
+CAN as the car receives it, which is what the openpilot follow check reads.
+
+## Blocks
+
+### MCU
+
+STM32F413RGT6 (LQFP64), 8 MHz HSE crystal (the panda clock setup expects it),
+BOOT0 with a pull-down and a test pad / button for ROM DFU, NRST with a pad,
+SWD pads (SWDIO, SWCLK, NRST, 3V3, GND).
+
+Pins, matching the Ocelot gateway:
+
+| function | pin |
+|---|---|
+| CAN1 RX / TX (Chassis, ADAS side) | PB8 / PB9 |
+| CAN2 RX / TX (Chassis, car side) | PB5 / PB6 |
+| CAN3 RX / TX (V-CAN tap) | PA8 / PA15 |
+| transceiver 1 / 2 / 3 standby (high = standby) | PC1 / PC13 / PA0 |
+| ignition sense (IGN through a divider) | PA1 |
+| relay enable (high = energize) | PB12 |
+| watchdog kick | a free GPIO, picked in the schematic phase |
+| USB D− / D+ | PA11 / PA12 |
+| status LED | a free GPIO |
+
+### CAN
+
+Three TJA1042T/3 (VCC 5 V, VIO 3.3 V). TJA1042 is passive when unpowered, so an
+unpowered board doesn't load either bus. Each port:
+
+- split termination (2 × 60.4 Ω + 4.7 nF to GND), enabled by a solder jumper,
+  default **open**. Whether a segment needs it is measured on the car
+  (`HARDWARE.md`, termination step).
+- CAN ESD diode array (e.g. PESD2CAN class) at the connector side.
+- 120 Ω differential routing.
+
+### Fail-open relay
+
+Omron G6K-2F-Y (DPDT signal relay, 5 V coil) or an equivalent available for
+assembly. Each pole's **NC** contact joins the ADAS-side and car-side CAN1 line
+(H to H, L to L). Energized, the bypass opens and only the gateway connects the
+two halves.
+
+The coil is driven by a low-side N-MOSFET with a flyback diode, and it is
+energized only when **both** of these hold:
+
+1. the MCU drives relay enable (PB12) high, and
+2. an independent hardware watchdog (e.g. TPS3823-33) has been kicked within its
+   timeout; its output goes low on timeout, and it also resets the MCU.
+
+Gated by a single-gate AND (or two series MOSFETs). Pull-downs keep the gate off
+while the MCU is in reset or unprogrammed.
+
+Firmware order (not a board requirement, but the board must allow it): bring up
+the transceivers, then energize the relay, then start forwarding. On any fault,
+stop forwarding first, then release the relay.
+
+### Power
+
+From IGN (harness pins 2 / 14), about 150 mA at most including the relay coil:
+
+- reverse-polarity protection (series Schottky or P-FET),
+- load-dump / transient TVS for a 12 V vehicle system,
+- input fuse (PTC or a fusible 0 Ω),
+- wide-input buck converter → 5 V (transceivers, relay coil),
+- LDO 5 V → 3.3 V (MCU, VIO, watchdog),
+- a power-good LED.
+
+### USB
+
+USB-C receptacle (USB 2.0 only), 5.1 kΩ CC pull-downs, ESD on D+/D−. USB VBUS
+can power the logic on the bench through a diode-OR with the 5 V rail, so the
+board can be flashed and used with Cabana without the car. The relay coil only
+runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
+
+## PCB
+
+- 4 layers, 1.6 mm, JLCPCB standard capabilities: 0.127 mm (5 mil) track and
+  space, 0.3 mm vias.
+- Stack-up: signal / GND / power / signal. A solid GND plane under the CAN and
+  USB pairs.
+- CAN pairs as 120 Ω differential pairs; USB D+/D− as 90 Ω.
+- 12 V input traces at least 0.5 mm; relay and power pins with thermal relief.
+- Size target: under 60 × 40 mm, both 18-pin connectors on the short edges.
+- Mounting holes ×2; silkscreen with the pin-1 marks, the bus names, and
+  "bench / test car only".
+
+## Automated checks (the reviewer stand-in)
+
+Nobody will review the layout by eye, so these run in `nix flake check` and must
+all pass before any order:
+
+1. **ERC** clean (`kicad-cli sch erc`, errors and warnings).
+2. **DRC** clean against JLCPCB's rules (`kicad-cli pcb drc`), including
+   **schematic parity**, so the board matches the schematic.
+3. **Safety-net checks** (script, netlist-based):
+   - every pass-through pin connects input to output and nothing else;
+   - box-side pins 9 / 11 connect to nothing;
+   - each relay NC contact joins the right ADAS-side and car-side line, and the
+     relay common and NC nets are exactly as in the table above;
+   - the coil driver's gate has a pull-down and is driven through the AND of
+     relay enable and the watchdog output;
+   - no CAN line connects to power or ground except through termination parts.
+4. **Layout checks** (script, PCB-based): differential pairs routed as pairs
+   with length mismatch under 1 mm, no CAN or USB pair crossing a plane split,
+   12 V track widths, every part on the top side for single-sided assembly.
+5. **Fab outputs:** gerbers, drill, JLCPCB BOM and pick-and-place generated from
+   the PCB, every BOM line with an LCSC number.
+6. **Renders** of both sides, so a person (or I) can at least look at it.
+
+## Phases
+
+1. Spec (this file).
+2. Schematic as code (SKiDL → KiCad netlist), BOM with LCSC numbers, ERC and
+   safety-net checks in CI.
+3. Layout: placement by script, routing with freerouting, DRC, parity and layout
+   checks in CI.
+4. Fab outputs, a first order of about 5 assembled boards.
+5. Bring-up: firmware pin-map port, bench tests from `HARDWARE.md`.
