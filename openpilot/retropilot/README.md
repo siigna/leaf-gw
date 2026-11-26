@@ -70,13 +70,25 @@ at the commits above. The suites below were run on that tree.
   as the spec's `_interp`. `CC.longActive` does not
   exist in 0.8.13, so it uses `c.active`. `actuatorsOutput.accel` is the clipped
   accel.
-- Follow check (`FollowMonitor` in `carcontroller.py`, as upstream):
-  - It is fed each frame with the T sent, `CS.leaf_feedback`, `c.active`, and
-    `evaluate = vEgo > 2 and not gasPressed and not brakePressed`.
-  - It faults when T from 16 frames (160 ms) ago minus the feedback T exceeds 60
-    for 100 frames in a row, i.e. the car slows less than asked.
-  - It skips while the brake marker is in the history, while not evaluating, and
-    when there is no feedback. A fault latches until long goes inactive.
+- Follow check (`FollowMonitor` in `carcontroller.py`, identical to upstream's
+  time-based version):
+  - It is fed each frame with the T sent, `CS.leaf_feedback`, `c.active`,
+    `evaluate = vEgo > 2 and not gasPressed and not brakePressed`, and `now`.
+  - It keeps (time, T) history and compares the newest T sent at or before
+    `now - 0.16 s` against the feedback T. It faults once that T exceeds the
+    feedback by more than 60 continuously for 1.0 s, i.e. the car slows less than
+    asked.
+  - It skips when the history doesn't reach back 0.16 s yet, while not evaluating,
+    with no feedback, or while the brake marker is in the history. A fault latches
+    until long goes inactive.
+  - `now is None` (no clock) resets the monitor like inactive and returns False,
+    so the controller can never crash on a missing clock. `sec_since_boot()`
+    always returns a float here, so the caller has no missing value to pass.
+  - **Time source:** `common.realtime.sec_since_boot()`, called in the controller.
+    0.8.13's `CI.apply(CC)` passes no timestamp, so the monitor takes this tree's
+    monotonic clock, the same one controlsd's `Ratekeeper` uses. `frame * DT_CTRL`
+    would assume 100 Hz, and that assumption is exactly what the time-based
+    monitor removes.
 - `carstate.py`:
   - With long on, `PROPULSION_FEEDBACK.D` is added (100 Hz check) to the bus-0
     parser for the Leaf and to the bus-1 parser for the Leaf IC. Lateral-only
@@ -99,18 +111,25 @@ at the commits above. The suites below were run on that tree.
   - the controller's frames on bus 2, decoded;
   - no frames without long;
   - `0x180` required on the harness's bus (0 for Leaf, 1 for Leaf IC);
-  - `FollowMonitor`'s rules (lag, window, latch, reset, and each skip);
+  - `FollowMonitor`'s rules at 100 Hz and 50 Hz, mirroring `test_leaf_gw_long.py`:
+    lag in time, window, latch, reset, and each skip;
   - end to end through `CarInterface.update`/`apply`, with real bus-0 CAN
     including `0x180`:
-    - `accFaulted` fires when the car slows less than asked, after about 1.16 s;
+    - `accFaulted` fires when the car slows less than asked;
+    - the clock is patched, so the fault time is checked at 100 Hz and at 50 Hz,
+      and must be 1.1–1.3 s in both;
     - it does not fire when the car follows or slows more.
 
   With `FollowMonitor.update` patched to always return False, the fault test
   fails, so the test proves the monitor is what raises the event.
 
   When `leaf_gw_long.py` has been copied into `selfdrive/car/nissan/`, one more
-  test compares every constant, the full packer input space, and the controller's
-  frames against `gateway_longitudinal` + `pack_*`. Without that copy it skips.
+  test compares against the spec:
+  - every constant;
+  - the full packer input space;
+  - the controller's frames against `gateway_longitudinal` + `pack_*`;
+  - `FollowMonitor` against `leaf_gw_long.FollowMonitor` over a seeded random
+    drive with jittered 5–30 ms steps, which does reach the fault path. Without that copy it skips.
 
 `panda.patch`:
 - `board/safety/safety_nissan.h`:
@@ -285,9 +304,9 @@ python3 -m pytest -q selfdrive/car/tests/test_car_interfaces.py -k NISSAN
   alt-EPS. `test_nissan_leaf_gw.py` fails at import.
 - The panda firmware (F4 + H7, DEBUG, `-Wall -Wextra -Werror`) builds with the
   patch, using `gcc-arm-embedded`.
+- MISRA: no new violations (cppcheck e1cff1d1, as `Dockerfile.panda` pins; `tests/misra/test_misra.sh` default and with `-DALLOW_DEBUG`).
 
 Not run:
-- MISRA/cppcheck (`panda/tests/misra`).
 - Process replay and `test_models.py`. They need routes, and no Leaf route has
   the gateway.
 - `controlsd` end to end. The longitudinal MPC needs acados.

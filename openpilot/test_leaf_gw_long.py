@@ -63,23 +63,32 @@ def main():
   neg = (-100) & 0xFFF
   assert abs(L.feedback_t(bytes([0, 0, neg >> 4, (neg & 0xF) << 4, 0, 0, 0, 0])) - (2067.1 + 100) / 0.796) < 0.01
 
-  # follow monitor: car tracks op -> no fault; car slows less than asked -> fault after 1 s;
-  # car slows MORE than asked (stock winning) -> no fault; brake marker / not evaluating -> no fault
-  def run(op, car, n, evaluate=True, mon=None):
-    mon = mon or L.FollowMonitor()
-    for _ in range(n):
-      f = mon.update(op, car, True, evaluate)
+  # follow monitor (time-based): car tracks op -> no fault; car slows less than asked
+  # -> fault after LAG + WINDOW; car slows MORE (stock winning) -> no fault; brake marker /
+  # not evaluating -> no fault; same timing at 100 Hz and 50 Hz
+  def run(op, car, secs, evaluate=True, mon=None, dt=0.01, t=0.0):
+    mon = mon or L.FollowMonitor(); f = False
+    for i in range(round(secs / dt)):
+      f = mon.update(op, car, True, evaluate, t + i * dt)
     return f, mon
-  assert not run(2600, 2600, 500)[0]
-  assert not run(2600, 2600 - L.FOLLOW_TOL, 500)[0]
-  assert run(2700, 2600, L.FOLLOW_LAG_FRAMES + L.FOLLOW_WINDOW + 1)[0]
-  assert not run(2700, 2600, L.FOLLOW_LAG_FRAMES + L.FOLLOW_WINDOW - 1)[0]
-  assert not run(2500, 2800, 500)[0]
-  assert not run(2700, 2600, 500, evaluate=False)[0]
-  assert not run(L.PROPILOT_BRAKE_RAW, 2600, 500)[0]
-  f, mon = run(2700, 2600, 300)
-  assert f and mon.update(2700, 2700, True, True)      # latched while active
-  assert not mon.update(2700, 2700, False, True)       # cleared when long goes inactive
+  for dt in (0.01, 0.02):
+    assert not run(2600, 2600, 5, dt=dt)[0]
+    assert not run(2600, 2600 - L.FOLLOW_TOL, 5, dt=dt)[0]
+    assert run(2700, 2600, L.FOLLOW_LAG + L.FOLLOW_WINDOW + 2 * dt, dt=dt)[0]
+    assert not run(2700, 2600, L.FOLLOW_LAG + L.FOLLOW_WINDOW - 2 * dt, dt=dt)[0]
+    assert not run(2500, 2800, 5, dt=dt)[0]
+    assert not run(2700, 2600, 5, evaluate=False, dt=dt)[0]
+    assert not run(L.PROPILOT_BRAKE_RAW, 2600, 5, dt=dt)[0]
+  f, mon = run(2700, 2600, 3)
+  assert f and mon.update(2700, 2700, True, True, 3.0)   # latched while active
+  assert not mon.update(2700, 2700, False, True, 3.01)   # cleared when long goes inactive
+  assert not L.FollowMonitor().update(2700, 2600, True, True, None)   # no clock: skip, don't crash
+  # the lag really is in time: op stepped from 2600 to 2700 only 0.1 s ago is not yet compared
+  mon = L.FollowMonitor()
+  for i in range(300):
+    mon.update(2600, 2600, True, True, i * 0.01)
+  for i in range(10):
+    assert not mon.update(2700, 2600, True, True, 3.0 + i * 0.01) and mon.bad_since is None
 
   # pack -> decode round-trip across the whole range; frames must be gateway-valid
   for accel, la, stop, v, ves in sweep():

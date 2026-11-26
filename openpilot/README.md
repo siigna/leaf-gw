@@ -39,7 +39,8 @@ T the car is acting on. If the car is slowing **less** than openpilot asked by
 more than 60 counts for 1 s, it sets `accFaulted`, which disengages immediately,
 and stays faulted until longitudinal goes inactive. Slowing **more** than asked
 is allowed: that's stock winning the arbitration, which is the point of the
-gateway. It isn't checked below 2 m/s, with a pedal pressed, or around the brake
+gateway. The lag and window are measured in time, not frames, so the check holds
+at any controller rate (FlowPilot's loop may run at 50 Hz on a phone). It isn't checked below 2 m/s, with a pedal pressed, or around the brake
 marker. On 37 stock Leafs, a perfectly relaying gateway would never trip it
 (0 of 127 segments; p99.9 residual 61 counts).
 
@@ -96,6 +97,8 @@ Verified against opendbc `341fb3d9` (master, 2026-11-24): the standalone test
 passes, all five nissan interfaces (incl. the fuzzed Leaf longitudinal
 `CarController.update()`) pass, and `pytest test_nissan.py` → 103 passed / 15
 skipped.
+
+MISRA: no new violations (cppcheck 2.21.0).
 
 ## Forks (sunnypilot, StarPilot, RetroPilot, FlowPilot)
 

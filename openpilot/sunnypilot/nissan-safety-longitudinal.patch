@@ -1,8 +1,8 @@
 diff --git a/opendbc/safety/modes/nissan.h b/opendbc/safety/modes/nissan.h
-index 2d7707bc..753d53c6 100644
+index 2d7707bc..511f764f 100644
 --- a/opendbc/safety/modes/nissan.h
 +++ b/opendbc/safety/modes/nissan.h
-@@ -86,6 +86,19 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
+@@ -86,7 +86,21 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
    }
  }
  
@@ -11,18 +11,20 @@ index 2d7707bc..753d53c6 100644
 +// the shared longitudinal helpers; the gateway re-emits onto Chassis CAN and keeps
 +// stock AEB by magnitude arbitration.
 +#define NISSAN_GW_BUS 2
-+static const LongitudinalLimits NISSAN_LONG_LIMITS = {
-+  // 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
-+  .max_gas = 3415,       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
-+  .min_gas = 2272,       // most acceleration openpilot may request (~+0.8 m/s^2)
-+  .inactive_gas = 2595,  // PROPILOT_INACTIVE_RAW (stock idle frame)
-+  .max_brake = 659,      // 0x1C3 pressure ceiling (0.5-count units)
-+};
 +
  static bool nissan_tx_hook(const CANPacket_t *msg) {
++  const LongitudinalLimits NISSAN_LONG_LIMITS = {
++    // 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
++    .max_gas = 3415,       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
++    .min_gas = 2272,       // most acceleration openpilot may request (~+0.8 m/s^2)
++    .inactive_gas = 2595,  // PROPILOT_INACTIVE_RAW (stock idle frame)
++    .max_brake = 659,      // 0x1C3 pressure ceiling (0.5-count units)
++  };
++
    bool tx = true;
    bool violation = false;
-@@ -103,6 +116,23 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
+ 
+@@ -103,6 +117,23 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
      }
    }
  
@@ -46,7 +48,7 @@ index 2d7707bc..753d53c6 100644
    if (violation) {
      tx = false;
    }
-@@ -118,6 +148,16 @@ static safety_config nissan_init(uint16_t param) {
+@@ -118,6 +149,16 @@ static safety_config nissan_init(uint16_t param) {
      {0x239, 2, 8, .check_relay = true}    // CRUISE_THROTTLE (Leaf)
    };
  
@@ -63,7 +65,7 @@ index 2d7707bc..753d53c6 100644
    static const CanMsg NISSAN_TX_MSGS_XTRAIL[] = {
      {0x169, 0, 8, .check_relay = true},   // LKAS
      {0x2b1, 0, 8, .check_relay = true},   // PROPILOT_HUD
-@@ -147,16 +187,28 @@ static safety_config nissan_init(uint16_t param) {
+@@ -147,16 +188,28 @@ static safety_config nissan_init(uint16_t param) {
      NISSAN_COMMON_RX_CHECKS
    };
  

@@ -28,7 +28,7 @@ panda, opendbc and cereal are vendored, so there is one patch at the repo root.
       - `experimentalLongitudinalAvailable` = Leaf and heartbeat in `fingerprint[2]`.
       - `openpilotLongitudinalControl` = `experimental_long and available`.
       - `Panda.FLAG_NISSAN_LEAF_LONG`; `pcmCruise` stays True and `autoResumeSng` stays False.
-    - `tests/test_leaf_gw.py` (18 tests): the gates, golden and round-trip frames, the DBC heartbeat, the controller, the UI debug line, the 0x180 follow check, and byte-identity with the spec.
+    - `tests/test_leaf_gw.py` (19 tests): the gates, golden and round-trip frames, the DBC heartbeat, the controller, the UI debug line, the 0x180 follow check, and byte-identity with the spec.
     - `opendbc/nissan_leaf_2018.dbc`: `BO_ 1535 LEAF_GW_HEARTBEAT` and `BO_ 384 PROPULSION_FEEDBACK`.
   - **`panda/board/safety/safety_nissan.h`**:
     - This panda has `LongitudinalLimits` + `longitudinal_gas_checks` / `longitudinal_brake_checks` (through `get_longitudinal_allowed()` = `controls_allowed && !gas_pressed_prev`). So it uses the same `NISSAN_LONG_LIMITS` as upstream: `max_gas` 3415, `min_gas` 2272, `inactive_gas` 2595, `max_brake` 659.
@@ -59,7 +59,7 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
   - Only when `openpilotLongitudinalControl` is on, `PROPULSION_FEEDBACK.D` is added to the bus-0 parser (Leaf) or the bus-1 parser (Leaf IC). Its check frequency is 0, so a missing 0x180 never affects `canValid`; lateral-only cars are unaffected.
   - `leaf_feedback = (2067.1 - D) / 0.796`. It goes to None when `ts_nanos` hasn't changed for more than 5 updates.
   - `ret.accFaulted = gw_follow_fault`. `create_common_events` turns that into `accFaulted`, which disengages.
-- **carcontroller:** `FollowMonitor` with LAG 16, TOL 60, WINDOW 100 (100 Hz), fed with the T actually sent.
+- **carcontroller:** `FollowMonitor` as upstream: time-based, with LAG 0.16 s, TOL 60 and WINDOW 1.0 s. It keeps a history of (time, T sent) and is fed the controller's `now_nanos * 1e-9`, which comes from `controlsd`'s `sec_since_boot()`, so it holds at any controller rate. With no clock (`now` is None) it resets and returns False instead of raising.
   - It evaluates only when `vEgo > 2 and not gasPressed and not brakePressed`.
   - It skips while the brake marker is in the history or there is no feedback.
   - It faults when `hist[0] - feedback > TOL` for WINDOW frames, and latches until long goes inactive.
@@ -69,8 +69,9 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
   - End to end through `CarInterface.update`/`apply` with packed CAN (wheel speeds plus 0x180), for both Leaf and Leaf IC. The car acting on T 2528 while asked for 2730 faults; following (2730) or slowing more (2784 while asked 2528) never faults.
   - The latch is released when long goes inactive.
   - `test_follow_monitor_matches_spec`: same constants, step-for-step identical to `leaf_gw_long.FollowMonitor`, and the DBC's D decodes like `feedback_t`.
-  - With the monitor disabled (fault never set), 3 tests fail.
-- **Rate:** controlsd runs once per boardd CAN packet, and boardd's `can_recv_thread` publishes at 100 Hz, so LAG/WINDOW are upstream's 100 Hz values.
+  - `test_follow_check_timing_is_rate_independent`: through the real `CarInterface`, the first fault lands at 1.1–1.3 s with both 10 ms and 20 ms steps.
+  - Without a clock, `update(..., now=None)` and `apply(CC, sm, None)` return without raising or faulting.
+  - With the monitor disabled (fault never set), 4 tests fail. Fed a fixed 10 ms frame clock instead of `now_nanos`, the rate test fails.
 
 ## Things this tree needed, also in the patch
 
@@ -80,7 +81,7 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
    - Other brands still have the mismatch, and the patch doesn't touch them. That accounts for most of the 202 non-Nissan `test_car_interfaces` failures.
 2. **UI "System Unresponsive!".**
    - `OnRoadScreen.NoDebugMessagesWarning()` requires a `"0…"` and a non-`"0"` UDP debug line (`common.logger.sLogger`) within 500 ms.
-   - The Nissan carcontroller now sends `"0nissan"` or `"0leaf-gw T<T> P<pressure>"` every 5th frame (100 ms). Hyundai sends one every frame.
+   - The Nissan carcontroller now sends `"0nissan"` or `"0leaf-gw T<T> P<pressure>"` every 5th frame (about 50 ms at 100 Hz). Hyundai sends one every frame.
 3. **Python 3.11+ dataclass defaults.**
    - `car_parts: CarParts = CarParts(...)` is a mutable dataclass default, which Python 3.11+ rejects at import. That makes every brand fail to import, because `car_helpers` loads them all.
    - The patch applies jagheterfredrik's fix (`adf63ab`, "all running"): `field(default_factory=…)` in `docs_definitions.py` and the chrysler, ford, mazda, nissan, subaru, toyota and volkswagen `values.py` files.
@@ -107,9 +108,11 @@ These are the same as jagheterfredrik.
 | `panda/tests/safety/` (all) | 57 failed, 1581 passed, 858 skipped | 5 failed, 1657 passed, 867 skipped. The 5 left are Hyundai `test_spam_can_buses`, failing before and after. |
 | `test_car_interfaces.py -k nissan` | collection error (Python 3.11 dataclass default) | **5 passed** |
 | `test_car_interfaces.py` (all) | collection error | 5 passed, 202 failed (other brands: the same `apply()`/`update()` signature mismatch, plus a few CAN-parser setup errors) |
-| `selfdrive/car/nissan/tests` | n/a (new) | **18 passed** with `leaf_gw_long.py` copied in; 15 passed, 3 skipped without it |
+| `selfdrive/car/nissan/tests` | n/a (new) | **19 passed** with `leaf_gw_long.py` copied in; 16 passed, 3 skipped without it |
 | `test_leaf_gw_long.py` | passes | passes |
 | panda F4 + H7 firmware (leaf-gw `.#panda`) | n/a | builds and signs |
+
+MISRA: no new violations (cppcheck e1cff1d1 + 7199dde1, as `panda/tests/misra/install.sh` pins; F4 + H7 + pedal).
 
 `openpilot/check-forks.sh phr00t` passes. With a deliberately broken panda test (`MAX_GAS` 3414) it prints FAIL.
 
@@ -121,7 +124,7 @@ Checks that the new panda tests catch the code they guard:
 | Heartbeat removed from the LONG addr checks | 1 |
 | `0x2B0` decoded with the wrong nibble order | 3 |
 
-The car-side mutation checks are the same as in `../flowpilot/`; with the follow monitor disabled, 3 tests fail.
+The car-side mutation checks are the same as in `../flowpilot/`; with the follow monitor disabled, 4 tests fail.
 
 ## Deviations from upstream
 

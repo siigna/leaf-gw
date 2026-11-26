@@ -41,9 +41,9 @@ def heartbeat_valid(d):
 # D ~= -0.796 * T + 2067.1 (SHIOKAZE; corr -0.999 on the 37-car fleet). Panda bus 0
 # on the Nissan A harness, bus 1 on the IC harness.
 LEAF_FEEDBACK_ADDR = 0x180
-FOLLOW_LAG_FRAMES = 16      # 160 ms at the 100 Hz controller rate
+FOLLOW_LAG = 0.16           # s: 0x180 trails the request by ~160 ms
 FOLLOW_TOL = 60             # T counts; fleet p99.9 residual is 61, max-over-1-s 0 trips
-FOLLOW_WINDOW = 100         # 1 s sustained before faulting
+FOLLOW_WINDOW = 1.0         # s sustained before faulting
 
 
 def feedback_t(d):
@@ -56,29 +56,35 @@ def feedback_t(d):
 class FollowMonitor:
   """One-sided check that the car follows what openpilot sent through the gateway.
 
-  Faults when the car is slowing LESS than openpilot asked (T from 160 ms ago minus
-  the feedback T > FOLLOW_TOL) for FOLLOW_WINDOW frames: the gateway isn't relaying,
-  or the car isn't obeying. Slowing MORE than asked is allowed: that's stock winning
-  the arbitration, which is the point. Latches until longitudinal goes inactive."""
+  Faults when the car is slowing LESS than openpilot asked (T sent FOLLOW_LAG ago
+  minus the feedback T > FOLLOW_TOL) for FOLLOW_WINDOW seconds: the gateway isn't
+  relaying, or the car isn't obeying. Slowing MORE than asked is allowed: that's
+  stock winning the arbitration, which is the point. Latches until longitudinal goes
+  inactive. Time-based (`now` in seconds), so it's right at any controller rate."""
 
   def __init__(self):
-    self.hist = []
-    self.bad = 0
+    self.hist = []          # (time, T sent)
+    self.bad_since = None
     self.fault = False
 
-  def update(self, op_t, feedback, active, evaluate):
-    if not active:
-      self.hist, self.bad, self.fault = [], 0, False
+  def update(self, op_t, feedback, active, evaluate, now):
+    if not active or now is None:   # no clock -> can't check; never crash the controller
+      self.hist, self.bad_since, self.fault = [], None, False
       return False
-    self.hist = (self.hist + [op_t])[-(FOLLOW_LAG_FRAMES + 1):]
-    lagged = self.hist[0]
-    if (not evaluate or feedback is None or len(self.hist) <= FOLLOW_LAG_FRAMES or
-        PROPILOT_BRAKE_RAW in self.hist):
-      self.bad = 0
+    self.hist.append((now, op_t))
+    while len(self.hist) > 1 and self.hist[1][0] <= now - FOLLOW_LAG:
+      self.hist.pop(0)      # keep the newest sample at or before now - LAG, plus everything after
+    t0, lagged = self.hist[0]
+    if (not evaluate or feedback is None or t0 > now - FOLLOW_LAG or
+        any(t == PROPILOT_BRAKE_RAW for _, t in self.hist)):
+      self.bad_since = None
       return self.fault
-    self.bad = self.bad + 1 if lagged - feedback > FOLLOW_TOL else 0
-    if self.bad >= FOLLOW_WINDOW:
-      self.fault = True
+    if lagged - feedback > FOLLOW_TOL:
+      self.bad_since = now if self.bad_since is None else self.bad_since
+      if now - self.bad_since >= FOLLOW_WINDOW:
+        self.fault = True
+    else:
+      self.bad_since = None
     return self.fault
 
 

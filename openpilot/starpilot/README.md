@@ -58,13 +58,17 @@ later, as `D ≈ -0.796·T + 2067` (SHIOKAZE, 37 cars).
   on `NISSAN_LEAF_IC`. It converts it to `leaf_feedback = (2067.1 - D) / 0.796`. The
   value is `None` when the frame is missing or its timestamp hasn't changed for more
   than 5 updates. `ret.accFaulted` is set from the controller's result.
-- **The check.** `carcontroller.py` keeps the last 17 T values it sent. It counts a
-  bad frame when the T sent 16 frames ago (160 ms) minus `leaf_feedback` is above 60.
-  After 100 bad frames in a row (1 s) it faults.
+- **The check.** It is time-based, so it behaves the same at any controller rate.
+  `carcontroller.py` passes `now_nanos * 1e-9` and keeps the T it sent with timestamps,
+  dropping all but the newest sample at or before `now - 0.16 s`. It counts the car as
+  behind when that T minus `leaf_feedback` is above 60. Once the car has been behind
+  for 1.0 s without a break, it faults.
 - **When it runs.** Only while `vEgo > 2` with neither pedal pressed, while feedback is
-  present, and while the brake marker is not in that history. Otherwise the bad-frame
-  count resets.
+  present, once 0.16 s of history exists, and while the brake marker is not in that
+  history. Otherwise the timer resets.
 - **Clearing.** A fault latches until long goes inactive.
+- **No clock.** If `now_nanos` is `None`, the check is skipped and resets. It never crashes
+  the controller.
 - **One-sided.** The car slowing *more* than asked is allowed: that is stock winning
   the arbitration.
 - **Scope.** Silencing mode has no follow check and doesn't need `0x180`.
@@ -218,14 +222,16 @@ does all of this.
 
 | suite | before (0b2061d) | after |
 |---|---|---|
-| `pytest opendbc/car/nissan/tests` | 29 passed | 80 passed |
+| `pytest opendbc/car/nissan/tests` | 29 passed | 81 passed |
 | `pytest opendbc/car/tests/test_car_interfaces.py -k nissan` | 5 passed | 5 passed |
 | `pytest opendbc/safety/tests/test_nissan.py` | 111 passed, 20 skipped | 152 passed, 25 skipped |
 | `test_leaf_gw_long.py` | pass | pass |
 
 `check-forks.sh starpilot` runs the safety and car-test directories together:
-232 passed, 25 skipped, then 5 passed, then PASS. The 5 extra skips come from the
+233 passed, 25 skipped, then 5 passed, then PASS. The 5 extra skips come from the
 new safety class, which inherits the stock Leaf class's skipped tests.
+
+MISRA: no new violations (cppcheck 2.18.3), checked both default and with -DALLOW_DEBUG.
 
 Follow-check tests, all run through the real `CarInterface.update`/`apply`:
 - The gate: 0x180 absent, or on the other harness's bus, for each Leaf.
@@ -233,9 +239,11 @@ Follow-check tests, all run through the real `CarInterface.update`/`apply`:
 - No fault when the car follows, or slows more than asked.
 - Skipped below 2 m/s, with no feedback, and while braking.
 - The fault latches until long goes inactive.
+- The fault fires 1.1-1.3 s in at both 100 Hz and 50 Hz controller steps (rate independence).
 
-With the monitor disabled (`CS.gw_follow_fault = False`), both fault tests fail
-(`2 failed, 4 passed` for `-k follow`). The quiet and skip tests pass either way,
+With the monitor disabled (`CS.gw_follow_fault = False`), both fault tests and the
+rate-independence test fail
+(`3 failed, 4 passed` for `-k follow`). The quiet and skip tests pass either way,
 as they should.
 
 ## Open points
@@ -253,4 +261,3 @@ as they should.
   that clears on manager start and that only the silencing `init()` writes. That code
   needs no change. `test_nissan_leaf_fallback.py` was not run because it needs a
   compiled `msgq`.
-- MISRA/cppcheck was not run.

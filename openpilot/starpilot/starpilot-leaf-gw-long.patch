@@ -1,8 +1,8 @@
 diff --git a/opendbc_repo/opendbc/car/nissan/carcontroller.py b/opendbc_repo/opendbc/car/nissan/carcontroller.py
-index bf83d90..4cc6928 100644
+index bf83d90..5d98656 100644
 --- a/opendbc_repo/opendbc/car/nissan/carcontroller.py
 +++ b/opendbc_repo/opendbc/car/nissan/carcontroller.py
-@@ -6,12 +6,44 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
+@@ -6,12 +6,51 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
  from opendbc.car.lateral import apply_std_steer_angle_limits
  from opendbc.car.interfaces import CarControllerBase
  from opendbc.car.nissan import nissancan
@@ -16,39 +16,46 @@ index bf83d90..4cc6928 100644
 +class FollowMonitor:
 +  """One-sided check that the car follows what openpilot sent through leaf-gw (gateway mode).
 +
-+  Faults when the car is slowing LESS than openpilot asked -- T from 160 ms ago minus
-+  the T the car is acting on (0x180) above TOL -- for WINDOW frames: the gateway isn't
++  Faults when the car is slowing LESS than openpilot asked -- T sent LAG ago minus the
++  T the car is acting on (0x180) above TOL -- for WINDOW seconds: the gateway isn't
 +  relaying, or the car isn't obeying. Slowing MORE than asked is fine: that's stock
-+  winning the arbitration. Latches until longitudinal goes inactive. Thresholds: on
-+  37 stock Leafs a perfect relay never trips (p99.9 residual 61, 0 of 127 segments)."""
-+  LAG = 16       # 160 ms at 100 Hz
++  winning the arbitration. Latches until longitudinal goes inactive. Time-based, so it
++  holds at any controller rate. On 37 stock Leafs a perfect relay never trips it
++  (p99.9 residual 61, 0 of 127 segments)."""
++  LAG = 0.16     # s
 +  TOL = 60       # T counts
-+  WINDOW = 100   # 1 s
++  WINDOW = 1.0   # s
 +
 +  def __init__(self):
-+    self.hist = []
-+    self.bad = 0
++    self.hist = []          # (time, T sent)
++    self.bad_since = None
 +    self.fault = False
 +
-+  def update(self, op_t, feedback, active, evaluate):
-+    if not active:
-+      self.hist, self.bad, self.fault = [], 0, False
++  def update(self, op_t, feedback, active, evaluate, now):
++    if not active or now is None:   # no clock -> can't check; never crash the controller
++      self.hist, self.bad_since, self.fault = [], None, False
 +      return False
-+    self.hist = (self.hist + [op_t])[-(self.LAG + 1):]
-+    if (not evaluate or feedback is None or len(self.hist) <= self.LAG or
-+        CarControllerParams.PROPILOT_BRAKE_RAW in self.hist):
-+      self.bad = 0
++    self.hist.append((now, op_t))
++    while len(self.hist) > 1 and self.hist[1][0] <= now - self.LAG:
++      self.hist.pop(0)
++    t0, lagged = self.hist[0]
++    if (not evaluate or feedback is None or t0 > now - self.LAG or
++        any(t == CarControllerParams.PROPILOT_BRAKE_RAW for _, t in self.hist)):
++      self.bad_since = None
 +      return self.fault
-+    self.bad = self.bad + 1 if self.hist[0] - feedback > self.TOL else 0
-+    if self.bad >= self.WINDOW:
-+      self.fault = True
++    if lagged - feedback > self.TOL:
++      self.bad_since = now if self.bad_since is None else self.bad_since
++      if now - self.bad_since >= self.WINDOW:
++        self.fault = True
++    else:
++      self.bad_since = None
 +    return self.fault
 +
 +
  class CarController(CarControllerBase):
    def __init__(self, dbc_names, CP):
      super().__init__(dbc_names, CP)
-@@ -21,6 +53,10 @@ class CarController(CarControllerBase):
+@@ -21,6 +60,10 @@ class CarController(CarControllerBase):
      self.apply_angle_last = 0
  
      self.packer = CANPacker(dbc_names[Bus.pt])
@@ -59,7 +66,7 @@ index bf83d90..4cc6928 100644
  
    def update(self, CC, CS, now_nanos, starpilot_toggles):
      actuators = CC.actuators
-@@ -29,7 +65,7 @@ class CarController(CarControllerBase):
+@@ -29,7 +72,7 @@ class CarController(CarControllerBase):
  
      can_sends = []
  
@@ -68,7 +75,7 @@ index bf83d90..4cc6928 100644
        accel = float(np.clip(actuators.accel, CarControllerParams.ACCEL_MIN, CarControllerParams.ACCEL_MAX))
        stopping = actuators.longControlState == LongCtrlState.stopping
        brake_mode = CC.longActive and (accel < CarControllerParams.PROPILOT_ACCEL_MIN or stopping)
-@@ -38,23 +74,23 @@ class CarController(CarControllerBase):
+@@ -38,23 +81,24 @@ class CarController(CarControllerBase):
          if brake_mode:
            raw_accel = CarControllerParams.PROPILOT_BRAKE_RAW
          else:
@@ -90,7 +97,8 @@ index bf83d90..4cc6928 100644
 +      can_sends.append(nissancan.create_accel_command(raw_accel, self.frame, CC.longActive, self.leaf_long_bus))
 +      if self.leaf_gw_long:
 +        CS.gw_follow_fault = self.follow.update(raw_accel, CS.leaf_feedback, CC.longActive,
-+                                                CS.out.vEgo > 2.0 and not CS.out.gasPressed and not CS.out.brakePressed)
++                                                CS.out.vEgo > 2.0 and not CS.out.gasPressed and not CS.out.brakePressed,
++                                                None if now_nanos is None else now_nanos * 1e-9)
        can_sends.append(nissancan.create_brake_command(brake_pressure, self.frame,
 -                                                      CC.longActive and brake_pressure > 0, brake_mode))
 +                                                      CC.longActive and brake_pressure > 0, brake_mode, self.leaf_long_bus))
@@ -100,7 +108,7 @@ index bf83d90..4cc6928 100644
          can_sends.append(nissancan.create_leaf_adas_tester_present())
  
      ### STEER ###
-@@ -94,7 +130,7 @@ class CarController(CarControllerBase):
+@@ -94,7 +138,7 @@ class CarController(CarControllerBase):
      # this generates a beep and a warning message every time you disengage
      if self.CP.carFingerprint in (CAR.NISSAN_LEAF, CAR.NISSAN_LEAF_IC) and self.frame % 2 == 0:
        can_sends.append(nissancan.create_cancel_msg(self.packer, CS.cancel_msg,
@@ -311,7 +319,7 @@ index 8c15b92..c4fffc8 100644
  
  def create_steering_control(packer, apply_torque, frame, steer_on, lkas_max_torque):
 diff --git a/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py b/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py
-index 995fcd9..4e1bb33 100644
+index 995fcd9..dcd38c2 100644
 --- a/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py
 +++ b/opendbc_repo/opendbc/car/nissan/tests/test_nissan.py
 @@ -6,6 +6,10 @@ from opendbc.car import Bus, ButtonType, gen_empty_fingerprint, structs
@@ -398,7 +406,7 @@ index 995fcd9..4e1bb33 100644
    assert brake[5] & 0x84 == 0x84
  
  
-@@ -262,3 +281,219 @@ def test_leaf_adas_restore_returns_to_kwp_default_session(monkeypatch):
+@@ -262,3 +281,230 @@ def test_leaf_adas_restore_returns_to_kwp_default_session(monkeypatch):
  
    assert restore_leaf_adas_tx(lambda **kwargs: [], lambda msgs: None)
    assert queries == [(0, [0x707], [b"\x10\x81"], [b"\x50\x81"], 0x20)]
@@ -565,7 +573,7 @@ index 995fcd9..4e1bb33 100644
 +  assert not CI.CS.leaf_gw_long and not CI.CC.leaf_gw_long
 +
 +
-+def _drive(car_t, accel, candidate=CAR.NISSAN_LEAF, frames=200, speed_kph=36, feedback=True):
++def _drive(car_t, accel, candidate=CAR.NISSAN_LEAF, frames=200, speed_kph=36, feedback=True, dt=DT_CTRL):
 +  """Run the real interface in gateway mode: openpilot asks for `accel`, the car reports
 +  (via 0x180 on the harness's car bus) acting on T `car_t`. Returns accFaulted per frame."""
 +  CP = CarInterface.get_params(candidate, gw_fingerprint(), [], True, False, False, TEST_TOGGLES)
@@ -587,7 +595,7 @@ index 995fcd9..4e1bb33 100644
 +    out, _ = CI.update([(now, msgs)], TEST_TOGGLES)
 +    faults.append(out.accFaulted)
 +    CI.apply(CC.as_reader(), now, TEST_TOGGLES)
-+    now += int(DT_CTRL * 1e9)
++    now += int(dt * 1e9)
 +  return faults
 +
 +
@@ -613,11 +621,22 @@ index 995fcd9..4e1bb33 100644
 +def test_follow_monitor_latches_until_inactive():
 +  from opendbc.car.nissan.carcontroller import FollowMonitor
 +  m = FollowMonitor()
-+  for _ in range(FollowMonitor.LAG + FollowMonitor.WINDOW):
-+    m.update(2730, 2528, True, True)
-+  assert m.fault
-+  assert m.update(2528, 2528, True, False)      # stays latched while active
-+  assert not m.update(2528, 2528, False, True)  # cleared when long goes inactive
++  now = 0.0
++  while not m.fault and now < 5.0:
++    m.update(2730, 2528, True, True, now)
++    now += DT_CTRL
++  assert m.fault and 1.1 <= now <= 1.3
++  assert m.update(2528, 2528, True, False, now)       # stays latched while active
++  assert not m.update(2528, 2528, False, True, now)   # cleared when long goes inactive
++  assert m.update(2730, 2528, True, True, None) is False  # no clock: no check, no crash
++
++
++def test_follow_check_timing_is_rate_independent():
++  # same ~1.16 s to fault whether the controller runs at 100 Hz or 50 Hz
++  for dt in (0.01, 0.02):
++    faults = _drive(car_t=2528, accel=-0.5, frames=round(2.0 / dt), dt=dt)
++    first = faults.index(True) * dt
++    assert 1.1 <= first <= 1.3, (dt, first)
 diff --git a/opendbc_repo/opendbc/car/nissan/tests/test_nissancan.py b/opendbc_repo/opendbc/car/nissan/tests/test_nissancan.py
 index cd19e2c..6a2b8b9 100644
 --- a/opendbc_repo/opendbc/car/nissan/tests/test_nissancan.py
@@ -793,7 +812,7 @@ index e4dcabd..5b5cc8b 100644
 +
  VAL_ 1057 GEAR_SHIFTER 7 "B" 4 "D" 3 "N" 2 "R" 1 "P" ;
 diff --git a/opendbc_repo/opendbc/safety/modes/nissan.h b/opendbc_repo/opendbc/safety/modes/nissan.h
-index 45184d4..dcdd9d7 100644
+index 45184d4..b86e158 100644
 --- a/opendbc_repo/opendbc/safety/modes/nissan.h
 +++ b/opendbc_repo/opendbc/safety/modes/nissan.h
 @@ -4,6 +4,8 @@
@@ -919,7 +938,7 @@ index 45184d4..dcdd9d7 100644
    // The disabled Leaf ADAS ECU no longer publishes CRUISE_STATE. Longitudinal
    // mode enables from physical SET/RES buttons in CRUISE_THROTTLE instead.
    static RxCheck nissan_long_rx_checks[] = {
-@@ -241,15 +274,26 @@ static safety_config nissan_init(uint16_t param) {
+@@ -241,15 +274,29 @@ static safety_config nissan_init(uint16_t param) {
  
    nissan_alt_eps = GET_FLAG(param, NISSAN_PARAM_ALT_EPS_BUS);
    nissan_longitudinal = false;
@@ -933,12 +952,15 @@ index 45184d4..dcdd9d7 100644
    nissan_set_button_prev = false;
    nissan_res_button_prev = false;
  
++  // FIXME: cppcheck thinks that nissan_leaf_gw and nissan_longitudinal are always false. This is not true
++  // if ALLOW_DEBUG is defined but cppcheck is run without ALLOW_DEBUG
 +  safety_config ret;
++  // cppcheck-suppress knownConditionTrueFalse
++  if (nissan_leaf_gw) {
++    ret = BUILD_SAFETY_CFG(nissan_leaf_gw_rx_checks, NISSAN_LEAF_GW_LONG_TX_MSGS);
    // cppcheck-suppress knownConditionTrueFalse
 -  return nissan_longitudinal ? BUILD_SAFETY_CFG(nissan_long_rx_checks, NISSAN_LONG_TX_MSGS) :
 -                              BUILD_SAFETY_CFG(nissan_rx_checks, NISSAN_TX_MSGS);
-+  if (nissan_leaf_gw) {
-+    ret = BUILD_SAFETY_CFG(nissan_leaf_gw_rx_checks, NISSAN_LEAF_GW_LONG_TX_MSGS);
 +  } else if (nissan_longitudinal) {
 +    ret = BUILD_SAFETY_CFG(nissan_long_rx_checks, NISSAN_LONG_TX_MSGS);
 +  } else {

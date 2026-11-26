@@ -11,10 +11,10 @@ index 26c1387b..0cf70923 100644
    bool subaru_gen2;
    bool subaru_pg_reversed_driver_torque;
 diff --git a/opendbc/safety/modes/nissan.h b/opendbc/safety/modes/nissan.h
-index a2fda838..76a20599 100644
+index a2fda838..de6182cc 100644
 --- a/opendbc/safety/modes/nissan.h
 +++ b/opendbc/safety/modes/nissan.h
-@@ -67,6 +67,19 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
+@@ -67,7 +67,21 @@ static void nissan_rx_hook(const CANPacket_t *msg) {
    }
  }
  
@@ -23,18 +23,20 @@ index a2fda838..76a20599 100644
 +// the shared longitudinal helpers; the gateway re-emits onto Chassis CAN and keeps
 +// stock AEB by magnitude arbitration.
 +#define NISSAN_GW_BUS 2
-+const LongitudinalLimits NISSAN_LONG_LIMITS = {
-+  // 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
-+  .max_gas = 3415,       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
-+  .min_gas = 2272,       // most acceleration openpilot may request (~+0.8 m/s^2)
-+  .inactive_gas = 2595,  // PROPILOT_INACTIVE_RAW (stock idle frame)
-+  .max_brake = 659,      // 0x1C3 pressure ceiling (0.5-count units)
-+};
 +
  static bool nissan_tx_hook(const CANPacket_t *msg) {
++  const LongitudinalLimits NISSAN_LONG_LIMITS = {
++    // 0x2B0 T is a decel-up scale: "gas" here is just the bounded command range
++    .max_gas = 3415,       // PROPILOT_BRAKE_RAW (stock friction-brake marker, most decel)
++    .min_gas = 2272,       // most acceleration openpilot may request (~+0.8 m/s^2)
++    .inactive_gas = 2595,  // PROPILOT_INACTIVE_RAW (stock idle frame)
++    .max_brake = 659,      // 0x1C3 pressure ceiling (0.5-count units)
++  };
++
    bool tx = true;
    bool violation = false;
-@@ -95,6 +108,23 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
+ 
+@@ -95,6 +109,23 @@ static bool nissan_tx_hook(const CANPacket_t *msg) {
      violation = (msg->data[1] & 0x3dU) > 0U;
    }
  
@@ -58,7 +60,7 @@ index a2fda838..76a20599 100644
    if (violation) {
      tx = false;
    }
-@@ -112,6 +142,18 @@ static safety_config nissan_init(uint16_t param) {
+@@ -112,6 +143,18 @@ static safety_config nissan_init(uint16_t param) {
      {0x280, 2, 8, .check_relay = true},   // CANCEL_MSG (Leaf)
    };
  
@@ -77,7 +79,7 @@ index a2fda838..76a20599 100644
    // Signals duplicated below due to the fact that these messages can come in on either CAN bus, depending on car model.
    static const RxCheck nissan_rx_checks[] = {
      {.msg = {{0x185, 0, 8, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}, { 0 }, { 0 }}},  // STEER_TORQUE_SENSOR
-@@ -127,11 +169,39 @@ static safety_config nissan_init(uint16_t param) {
+@@ -127,11 +170,39 @@ static safety_config nissan_init(uint16_t param) {
               {0x1cc, 0, 4, 100U, .ignore_checksum = true, .ignore_counter = true, .ignore_quality_flag = true}}},  // DOORS_LIGHTS / BRAKE
    };
  

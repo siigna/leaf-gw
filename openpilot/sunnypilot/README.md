@@ -52,14 +52,20 @@ them to a fresh worktree at the pin and runs the suites; the result is PASS.
     parser for the Leaf IC. A frame unchanged for more than 5 updates counts as
     stale and is ignored. `leaf_feedback = (2067.1 - D) / 0.796`, and
     `ret.accFaulted` (the standard CarState field) mirrors the controller's result.
-  - **CarController.** `FollowMonitor` (LAG 16, TOL 60, WINDOW 100) is the same
-    logic as `leaf_gw_long.FollowMonitor`; a randomized comparison found them
-    identical. It faults when the car slows less than asked
-    (`T sent 160 ms ago - feedback > 60`) for 1 s straight. It does not evaluate
-    while the brake marker is in its history, below 2 m/s, with gas or brake
-    pressed, or without feedback. Once faulted it stays faulted until
-    longitudinal goes inactive. Slowing more than asked is allowed, since that
-    is stock winning the arbitration.
+  - **CarController.** `FollowMonitor` is time-based: LAG 0.16 s, TOL 60,
+    WINDOW 1.0 s.
+    - It keeps a history of `(time, T)`. `update()` takes `now = now_nanos * 1e-9`,
+      so it behaves the same at any controller rate. With no timestamp
+      (`now_nanos` None) it skips the check and returns False instead of raising.
+    - It is the same logic as `leaf_gw_long.FollowMonitor`; a randomized
+      comparison with mixed time steps (120000 calls) found them identical.
+    - It faults when the car slows less than asked (`T sent 0.16 s ago -
+      feedback > 60`) for 1 s straight.
+    - It does not evaluate before 0.16 s of history exists, while the brake
+      marker is in the history, below 2 m/s, with gas or brake pressed, or
+      without feedback.
+    - Once faulted it stays faulted until longitudinal goes inactive. Slowing
+      more than asked is allowed, since that is stock winning the arbitration.
 - **Engagement.** `pcmCruise` stays True and `autoResumeSng` stays False, as in
   upstream and following the Toyota / Honda Nidec precedent:
   - The driver engages stock ProPILOT ICC, which puts `0x30f` in
@@ -78,7 +84,7 @@ Run in `nix develop .#openpilot` with `PYTHONPATH=<opendbc root>`.
 | suite | before (11c61f3e) | after |
 |---|---|---|
 | `python3 opendbc/car/nissan/test_leaf_gw_long.py` | n/a | passes |
-| `pytest opendbc/sunnypilot/car/nissan/test_nissan.py` (new) | n/a | 9 passed, 34 subtests |
+| `pytest opendbc/sunnypilot/car/nissan/test_nissan.py` (new) | n/a | 11 passed, 38 subtests |
 | `pytest opendbc/car/tests/test_car_interfaces.py -k nissan` | 5 passed | 5 passed |
 | `pytest opendbc/safety/tests/test_nissan.py` | 171 passed, 27 skipped | 235 passed, 36 skipped |
 | `pytest opendbc/safety/tests -k wrong_safety_mode` (all brands) | 132 passed, 37 skipped | 133 passed, 37 skipped |
@@ -89,7 +95,9 @@ failures:
 - With the ICBM guard reverted, `test_icbm_buttons` fails for both Leafs with
   longitudinal on.
 - With the follow monitor disabled, `test_faults_when_car_slows_less_than_asked`
-  fails for both Leafs.
+  and `test_timing_is_rate_independent` fail for both Leafs.
+
+MISRA: no new violations (cppcheck 2.21.0).
 
 ## How it differs from upstream
 
@@ -135,4 +143,7 @@ failures:
   - the follow check end to end, through the real CarInterface fed
     `WHEEL_SPEEDS_*` and `PROPULSION_FEEDBACK` at 10 m/s, for both Leafs. It
     faults about 1.2 s after the car starts slowing less than asked, and stays
-    quiet when the car follows or slows more.
+    quiet when the car follows or slows more;
+  - a missing clock (`update(..., now=None)`) returns False and does not raise;
+  - rate independence: the first fault comes 1.1–1.3 s in, with controller
+    steps of both 100 Hz and 50 Hz.

@@ -32,7 +32,7 @@ This is the upstream design (see [`..`](../README.md)) ported to FlowPilot, i.e.
     - `Panda.FLAG_NISSAN_LEAF_LONG` goes into `safetyParam`; also `stopAccel` -2.0 and `get_pid_accel_limits`.
     - `pcmCruise` stays True and `autoResumeSng` stays False. There is no ECU takeover.
     - It also fixes `apply()` (see below).
-  - `tests/test_leaf_gw.py` (new, 18 tests; the 0x180 follow-check tests are described below):
+  - `tests/test_leaf_gw.py` (new, 19 tests; the 0x180 follow-check tests are described below):
     - Gates: the experimental toggle, the heartbeat (absent, or on the wrong bus), and `pcmCruise`; other Nissans are unchanged.
     - Frames: golden stock frames, pack/decode round-trip for every T, the brake frame, and the DBC heartbeat layout.
     - Controller: T on the curve (higher T means more decel), and the frames when braking, stopped, disengaged, and with long off. Accel limits.
@@ -73,7 +73,7 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
   - Only when `openpilotLongitudinalControl` is on, `PROPULSION_FEEDBACK.D` is added to the bus-0 parser (Leaf) or the bus-1 parser (Leaf IC). Its check frequency is 0, so a missing 0x180 never affects `canValid`; lateral-only cars are unaffected.
   - `leaf_feedback = (2067.1 - D) / 0.796`. It goes to None when `ts_nanos` hasn't changed for more than 5 updates.
   - `ret.accFaulted = gw_follow_fault`. `create_common_events` turns that into `accFaulted`, which disengages.
-- **carcontroller:** `FollowMonitor` with LAG 16, TOL 60, WINDOW 100 (100 Hz), fed with the T actually sent.
+- **carcontroller:** `FollowMonitor` as upstream: time-based, with LAG 0.16 s, TOL 60 and WINDOW 1.0 s. It keeps a history of (time, T sent) and is fed the controller's `now_nanos * 1e-9`, which comes from `controlsd`'s `sec_since_boot()`, so it holds at any controller rate. With no clock (`now` is None) it resets and returns False instead of raising.
   - It evaluates only when `vEgo > 2 and not gasPressed and not brakePressed`.
   - It skips while the brake marker is in the history or there is no feedback.
   - It faults when `hist[0] - feedback > TOL` for WINDOW frames, and latches until long goes inactive.
@@ -83,8 +83,9 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
   - End to end through `CarInterface.update`/`apply` with packed CAN (wheel speeds plus 0x180), for both Leaf and Leaf IC. The car acting on T 2528 while asked for 2730 faults; following (2730) or slowing more (2784 while asked 2528) never faults.
   - The latch is released when long goes inactive.
   - `test_follow_monitor_matches_spec`: same constants, step-for-step identical to `leaf_gw_long.FollowMonitor`, and the DBC's D decodes like `feedback_t`.
-  - With the monitor disabled (fault never set), 3 tests fail.
-- **Rate:** controlsd runs once per boardd CAN packet, and boardd's `can_recv_thread` publishes at 100 Hz, so LAG/WINDOW are upstream's 100 Hz values.
+  - `test_follow_check_timing_is_rate_independent`: through the real `CarInterface`, the first fault lands at 1.1–1.3 s with both 10 ms and 20 ms steps.
+  - Without a clock, `update(..., now=None)` and `apply(CC, sm, None)` return without raising or faulting.
+  - With the monitor disabled (fault never set), 4 tests fail. Fed a fixed 10 ms frame clock instead of `now_nanos`, the rate test fails.
 
 ## Things found in this tree and fixed in the patch
 
@@ -96,7 +97,7 @@ This is the same as upstream `FollowMonitor` / `leaf_gw_long.feedback_t`: a one-
 2. **UI "System Unresponsive!" (phr00t lineage).**
    - `OnRoadScreen.NoDebugMessagesWarning()` warns, with an immediate-warning sound, unless two kinds of UDP debug line (port 9000, via `common.logger.sLogger`) have each arrived within 500 ms: one starting with `"0"`, and one not.
    - The non-`"0"` line comes from `lane_planner.py`. The `"0"` line is up to each car's carcontroller; Hyundai sends one every frame. Nissan sent none.
-   - The patch sends `"0nissan"` (lateral only) or `"0leaf-gw T<T> P<pressure>"` every 5th frame (100 ms at controlsd's 50 Hz). `test_ui_debug_line` checks it.
+   - The patch sends `"0nissan"` (lateral only) or `"0leaf-gw T<T> P<pressure>"` every 5th frame (about 50 ms at 100 Hz). `test_ui_debug_line` checks it.
 3. **The vendored panda tests don't match the vendored opendbc (pre-existing; every Nissan panda test failed).**
    - panda's `common.py` unpacks `make_can_msg` as `addr, dat, bus`, while this opendbc's packer returns `[addr, 0, dat, bus]`.
    - `test_nissan.py` asks for `*_generated` DBCs that this opendbc doesn't have.
@@ -121,9 +122,11 @@ The test harness also needs one host-only shim, which lives in `fork.sh` and is 
 | `panda/tests/safety/` (all) | 1519 failed, 635 passed, 1010 skipped | 159 failed, 1889 passed, 1022 skipped (+128 subtests). The failures left are other brands' missing `*_generated` DBCs. The `common.py` fix alone gives 159 failed / 1858 passed. |
 | `test_car_interfaces.py -k nissan` | 5 failed (`apply` TypeError) | **5 passed** |
 | `test_car_interfaces.py` (all) | aborts (Hyundai `CarController.__init__`) | aborts the same way (pre-existing, not Nissan) |
-| `selfdrive/car/nissan/tests` | n/a (new) | 15 passed, 3 skipped (spec absent); **18 passed** with `leaf_gw_long.py` copied in |
+| `selfdrive/car/nissan/tests` | n/a (new) | 16 passed, 3 skipped (spec absent); **19 passed** with `leaf_gw_long.py` copied in |
 | `test_leaf_gw_long.py` | passes | passes |
 | panda F4 + H7 firmware (leaf-gw `.#panda` shell) | n/a | builds and signs. One test-only flag is needed, `-Wno-error=unterminated-string-initialization`, because `board/obj/gitversion.h` trips gcc 15; this is pre-existing and not in the patch. |
+
+MISRA: no new violations (cppcheck 2.15.0; `panda/tests/misra/test_misra.sh`, F4 + H7).
 
 `openpilot/check-forks.sh flowpilot` passes with no outer shell. From a scratch copy with `MAX_GAS` changed to 3414 in the patched panda test, it prints FAIL: 1 failed, 102 passed, 12 skipped.
 
@@ -136,7 +139,7 @@ Checks that the new tests catch the code they guard:
 | `0x2B0` decoded with the wrong nibble order | 3 |
 | Heartbeat gate in `interface.py` turned into `or` | 2 |
 | Debug line removed | 1 (`test_ui_debug_line`) |
-| Follow monitor disabled | 3 |
+| Follow monitor disabled | 4 |
 
 ## phr00t/flowpilot master (`84f25d0`, 2024-06-09)
 

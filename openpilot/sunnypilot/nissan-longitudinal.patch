@@ -1,8 +1,8 @@
 diff --git a/opendbc/car/nissan/carcontroller.py b/opendbc/car/nissan/carcontroller.py
-index 20f3dab0..1636b1b4 100644
+index 20f3dab0..5e1011f3 100644
 --- a/opendbc/car/nissan/carcontroller.py
 +++ b/opendbc/car/nissan/carcontroller.py
-@@ -10,6 +10,39 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
+@@ -10,6 +10,46 @@ from opendbc.car.common.filter_simple import FirstOrderFilter
  from opendbc.sunnypilot.car.nissan.icbm import IntelligentCruiseButtonManagementInterface
  
  VisualAlert = structs.CarControl.HUDControl.VisualAlert
@@ -12,37 +12,44 @@ index 20f3dab0..1636b1b4 100644
 +class FollowMonitor:
 +  """One-sided check that the car follows what openpilot sent through leaf-gw.
 +
-+  Faults when the car is slowing LESS than openpilot asked -- T from 160 ms ago minus
-+  the T the car is acting on (0x180) above TOL -- for WINDOW frames: the gateway isn't
++  Faults when the car is slowing LESS than openpilot asked -- T sent LAG ago minus the
++  T the car is acting on (0x180) above TOL -- for WINDOW seconds: the gateway isn't
 +  relaying, or the car isn't obeying. Slowing MORE than asked is fine: that's stock
-+  winning the arbitration. Latches until longitudinal goes inactive. Thresholds: on
-+  37 stock Leafs a perfect relay never trips (p99.9 residual 61, 0 of 127 segments)."""
-+  LAG = 16       # 160 ms at 100 Hz
++  winning the arbitration. Latches until longitudinal goes inactive. Time-based, so it
++  holds at any controller rate. On 37 stock Leafs a perfect relay never trips it
++  (p99.9 residual 61, 0 of 127 segments)."""
++  LAG = 0.16     # s
 +  TOL = 60       # T counts
-+  WINDOW = 100   # 1 s
++  WINDOW = 1.0   # s
 +
 +  def __init__(self):
-+    self.hist = []
-+    self.bad = 0
++    self.hist = []          # (time, T sent)
++    self.bad_since = None
 +    self.fault = False
 +
-+  def update(self, op_t, feedback, active, evaluate):
-+    if not active:
-+      self.hist, self.bad, self.fault = [], 0, False
++  def update(self, op_t, feedback, active, evaluate, now):
++    if not active or now is None:   # no clock -> can't check; never crash the controller
++      self.hist, self.bad_since, self.fault = [], None, False
 +      return False
-+    self.hist = (self.hist + [op_t])[-(self.LAG + 1):]
-+    if (not evaluate or feedback is None or len(self.hist) <= self.LAG or
-+        CarControllerParams.PROPILOT_BRAKE_RAW in self.hist):
-+      self.bad = 0
++    self.hist.append((now, op_t))
++    while len(self.hist) > 1 and self.hist[1][0] <= now - self.LAG:
++      self.hist.pop(0)
++    t0, lagged = self.hist[0]
++    if (not evaluate or feedback is None or t0 > now - self.LAG or
++        any(t == CarControllerParams.PROPILOT_BRAKE_RAW for _, t in self.hist)):
++      self.bad_since = None
 +      return self.fault
-+    self.bad = self.bad + 1 if self.hist[0] - feedback > self.TOL else 0
-+    if self.bad >= self.WINDOW:
-+      self.fault = True
++    if lagged - feedback > self.TOL:
++      self.bad_since = now if self.bad_since is None else self.bad_since
++      if now - self.bad_since >= self.WINDOW:
++        self.fault = True
++    else:
++      self.bad_since = None
 +    return self.fault
  
  
  class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterface):
-@@ -23,6 +56,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
+@@ -23,6 +63,7 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
      self.apply_angle_last = 0
  
      self.packer = CANPacker(dbc_names[Bus.pt])
@@ -50,7 +57,7 @@ index 20f3dab0..1636b1b4 100644
  
    def update(self, CC, CC_SP, CS, now_nanos):
      actuators = CC.actuators
-@@ -31,6 +65,35 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
+@@ -31,6 +72,36 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
  
      can_sends = []
  
@@ -79,14 +86,15 @@ index 20f3dab0..1636b1b4 100644
 +
 +      can_sends.append(nissancan.create_accel_command(raw_accel, self.frame, CC.longActive))
 +      CS.gw_follow_fault = self.follow.update(raw_accel, CS.leaf_feedback, CC.longActive,
-+                                              CS.out.vEgo > 2.0 and not CS.out.gasPressed and not CS.out.brakePressed)
++                                              CS.out.vEgo > 2.0 and not CS.out.gasPressed and not CS.out.brakePressed,
++                                              None if now_nanos is None else now_nanos * 1e-9)
 +      can_sends.append(nissancan.create_brake_command(brake_pressure, self.frame,
 +                                                      CC.longActive and brake_pressure > 0, brake_mode))
 +
      ### STEER ###
      steer_hud_alert = 1 if hud_control.visualAlert in (VisualAlert.steerRequired, VisualAlert.ldw) else 0
  
-@@ -80,6 +143,8 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
+@@ -80,6 +151,8 @@ class CarController(CarControllerBase, IntelligentCruiseButtonManagementInterfac
  
      new_actuators = actuators.as_builder()
      new_actuators.steeringAngleDeg = self.apply_angle_last
@@ -331,10 +339,10 @@ index d49ad6d5..6250b0ac 100644
              self.last_button_frame = self.frame
 diff --git a/opendbc/sunnypilot/car/nissan/test_nissan.py b/opendbc/sunnypilot/car/nissan/test_nissan.py
 new file mode 100644
-index 00000000..0bd4ee6b
+index 00000000..e53209cb
 --- /dev/null
 +++ b/opendbc/sunnypilot/car/nissan/test_nissan.py
-@@ -0,0 +1,182 @@
+@@ -0,0 +1,194 @@
 +"""
 +Copyright (c) 2021-, Haibin Wen, sunnypilot, and a number of other contributors.
 +
@@ -349,6 +357,7 @@ index 00000000..0bd4ee6b
 +
 +from opendbc.car import DT_CTRL, gen_empty_fingerprint, structs
 +from opendbc.car.car_helpers import interfaces
++from opendbc.car.nissan.carcontroller import FollowMonitor
 +from opendbc.car.nissan.nissancan import LEAF_FEEDBACK_ADDR, LEAF_GW_HEARTBEAT, LEAF_LONG_BUS, create_accel_command
 +from opendbc.car.nissan.values import CAR, CarControllerParams, NissanSafetyFlags
 +from opendbc.sunnypilot.car.nissan.values import NissanSafetyFlagsSP
@@ -479,7 +488,7 @@ index 00000000..0bd4ee6b
 +    self.assertEqual(res_pressed, not alpha_long)
 +
 +
-+def drive(car_name, car_t, accel, frames=200):
++def drive(car_name, car_t, accel, frames=200, dt=DT_CTRL):
 +  """Run the real interface at 10 m/s: openpilot asks for `accel`, the car reports
 +  (via 0x180) acting on T `car_t`. Returns accFaulted per frame."""
 +  CI = get_interface(car_name, True)
@@ -496,7 +505,7 @@ index 00000000..0bd4ee6b
 +    out, _ = CI.update([(now, msgs)])
 +    faults.append(out.accFaulted)
 +    CI.apply(CC, structs.CarControlSP(), now)
-+    now += int(DT_CTRL * 1e9)
++    now += int(dt * 1e9)
 +  return faults
 +
 +
@@ -513,6 +522,17 @@ index 00000000..0bd4ee6b
 +  def test_quiet_when_car_follows_or_slows_more(self, car_name):
 +    self.assertFalse(any(drive(car_name, car_t=2730, accel=-0.5)))   # follows
 +    self.assertFalse(any(drive(car_name, car_t=2784, accel=0.0)))    # slows more than asked: stock winning
++
++  def test_no_clock_never_crashes(self):
++    # a missing timestamp must not raise in the controller, and can't fault
++    self.assertFalse(FollowMonitor().update(2730, 2528.0, True, True, None))
++
++  @parameterized("car_name, dt", [(c, dt) for c in LEAFS for dt in (0.01, 0.02)])
++  def test_timing_is_rate_independent(self, car_name, dt):
++    # same ~1.16 s to fault whether the controller runs at 100 Hz or 50 Hz
++    faults = drive(car_name, car_t=2528, accel=-0.5, frames=round(2.0 / dt), dt=dt)
++    self.assertIn(True, faults)
++    self.assertTrue(1.1 <= faults.index(True) * dt <= 1.3, (dt, faults.index(True) * dt))
 +
 +
 +if __name__ == "__main__":
