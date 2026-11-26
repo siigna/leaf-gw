@@ -33,9 +33,12 @@ car-harness cable ──18-pin──▶ [ leaf-gw board ] ──18-pin──▶ 
 
 From comma's open drawings ([Nissan A harness](https://github.com/commaai/hardware/blob/master/harness/v3/Nissan_A_Harness.pdf),
 [box pinout](https://github.com/commaai/hardware/blob/master/harness/v3/open_pinout.pdf)).
-Connector: Molex 501646-1800 (cable side), crimp 501647-1000. The mating board
-header and how the board connects to the box are to be confirmed from Molex's
-datasheets in the schematic phase.
+Connector: Molex 501646-1800 (cable side), crimp 501647-1000. The board's input
+is a vertical through-hole 501645-1820 header, which the harness cable plugs
+into. The board reaches the box through a second 501645-1820 and a short cable
+with a 501646-1800 on both ends, pin n to pin n, positions 9 and 11 left empty.
+No such cable is sold off the shelf; order it made from a drawing (for example
+LCSC's cable service).
 
 | pin | signal | on this board |
 |---|---|---|
@@ -71,9 +74,9 @@ Pins, matching the Ocelot gateway:
 | transceiver 1 / 2 / 3 standby (high = standby) | PC1 / PC13 / PA0 |
 | ignition sense (IGN through a divider) | PA1 |
 | relay enable (high = energize) | PB12 |
-| watchdog kick | a free GPIO, picked in the schematic phase |
+| watchdog kick | PC6 |
 | USB D− / D+ | PA11 / PA12 |
-| status LED | a free GPIO |
+| status LED | PC7 |
 
 ### CAN
 
@@ -88,8 +91,8 @@ unpowered board doesn't load either bus. Each port:
 
 ### Fail-open relay
 
-Omron G6K-2F-Y (DPDT signal relay, 5 V coil) or an equivalent available for
-assembly. Each pole's **NC** contact joins the ADAS-side and car-side CAN1 line
+Omron G6K-2F-Y DC5 (DPDT signal relay, 5 V coil; rated to +70 °C, which
+matters for where the board is mounted). Each pole's **NC** contact joins the ADAS-side and car-side CAN1 line
 (H to H, L to L). Energized, the bypass opens and only the gateway connects the
 two halves.
 
@@ -97,8 +100,15 @@ The coil is driven by a low-side N-MOSFET with a flyback diode, and it is
 energized only when **both** of these hold:
 
 1. the MCU drives relay enable (PB12) high, and
-2. an independent hardware watchdog (e.g. TPS3823-33) has been kicked within its
-   timeout; its output goes low on timeout, and it also resets the MCU.
+2. an independent hardware watchdog (TPS3828-33, open-drain) has been kicked
+   within its timeout; its output goes low on timeout, and it also resets the
+   MCU. Open-drain, because the STM32 drives NRST low itself on internal resets;
+   a push-pull output would fight it.
+
+The watchdog's WDI is left floating when the MCU isn't driving it, which
+disables its timer (TI SLVS165O, 7.3.4). That keeps ROM DFU and SWD reset-halt
+usable; in those states PB12's pull-down holds the relay off. The firmware must
+toggle the kick pin (PC6) at least every 0.9 s once it engages the relay.
 
 Gated by a single-gate AND (or two series MOSFETs). Pull-downs keep the gate off
 while the MCU is in reset or unprogrammed.
@@ -114,7 +124,8 @@ From IGN (harness pins 2 / 14), about 150 mA at most including the relay coil:
 - reverse-polarity protection (series Schottky or P-FET),
 - load-dump / transient TVS for a 12 V vehicle system,
 - input fuse (PTC or a fusible 0 Ω),
-- wide-input buck converter → 5 V (transceivers, relay coil),
+- wide-input buck converter → 5.16 V (so the 5 V rail stays in the TJA1042's
+  4.5–5.5 V range after the USB OR diode; the relay coil is rated to 150 %),
 - LDO 5 V → 3.3 V (MCU, VIO, watchdog),
 - a power-good LED.
 
@@ -154,9 +165,10 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
 Nobody will review the layout by eye, so these run in `nix flake check` and must
 all pass before any order:
 
-1. **ERC** clean (`kicad-cli sch erc`, errors and warnings).
-2. **DRC** clean against JLCPCB's rules (`kicad-cli pcb drc`), including
-   **schematic parity**, so the board matches the schematic.
+1. **ERC** clean: SKiDL's ERC, errors and warnings (SKiDL can't generate a KiCad
+   10 `.kicad_sch`, so there is no `kicad-cli sch erc`).
+2. **DRC** clean against JLCPCB's rules (`kicad-cli pcb drc`), and **parity** by
+   script: every PCB pad's net must match `out/leaf_gw.net`.
 3. **Safety-net checks** (script, netlist-based):
    - every pass-through pin connects input to output and nothing else;
    - box-side pins 9 / 11 connect to nothing;
@@ -164,7 +176,8 @@ all pass before any order:
      relay common and NC nets are exactly as in the table above;
    - the coil driver's gate has a pull-down and is driven through the AND of
      relay enable and the watchdog output;
-   - no CAN line connects to power or ground except through termination parts.
+   - no CAN line connects to power or ground except through termination parts
+     and its ESD array.
 4. **Layout checks** (script, PCB-based): differential pairs routed as pairs
    with length mismatch under 1 mm, no CAN or USB pair crossing a plane split,
    12 V track widths, every part on the top side for single-sided assembly.

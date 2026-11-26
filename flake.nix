@@ -16,6 +16,12 @@
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAll = f: nixpkgs.lib.genAttrs systems (s: f nixpkgs.legacyPackages.${s});
       lib = nixpkgs.lib;
+      # Board schematic tooling (hardware/board): SKiDL + KiCad 10's symbol and footprint libraries.
+      boardEnv = pkgs: {
+        KICAD9_SYMBOL_DIR = "${pkgs.kicad-small.libraries.symbols}/share/kicad/symbols";
+        KICAD9_FOOTPRINT_DIR = "${pkgs.kicad-small.libraries.footprints}/share/kicad/footprints";
+      };
+      boardPython = pkgs: pkgs.python313.withPackages (ps: [ ps.skidl ]);
     in {
       packages = forAll (pkgs: {
         # `nix build` compiles the pure core and runs the host test suite.
@@ -93,6 +99,15 @@
           touch $out
         '';
 
+        # Board schematic (SPEC.md phase 2): SKiDL ERC, outputs up to date,
+        # safety-net, BOM and footprint checks, and the mutation tests.
+        board-schematic = pkgs.runCommand "leaf-gw-board-schematic"
+          ({ nativeBuildInputs = [ (boardPython pkgs) ]; } // boardEnv pkgs) ''
+          cp -r ${./hardware/board} board && chmod -R u+w board
+          HOME=$TMPDIR bash board/check.sh
+          touch $out
+        '';
+
         openpilot-long = pkgs.runCommand "leaf-gw-openpilot-long-test"
           { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.numpy ])) ]; } ''
           cp ${./openpilot/leaf_gw_long.py} leaf_gw_long.py
@@ -120,6 +135,9 @@
             (pkgs.python3.withPackages (ps: [ ps.pycryptodome ]))
           ];
         };
+
+        # Board design (hardware/board): `./hardware/board/check.sh`.
+        hardware = pkgs.mkShell ({ packages = [ (boardPython pkgs) ]; } // boardEnv pkgs);
 
         # Run the opendbc car-port and panda-safety patches' test suites.
         # opendbc needs Python < 3.13 (pycapnp); libsafety builds with cc + cffi.
