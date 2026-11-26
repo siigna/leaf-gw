@@ -303,7 +303,18 @@ nothing has been transmitted to a car.
   marker included, which is what the gateway's arbitration uses.
 - **Byte 3 is a state field.** Its low nibble is always `0xC`; the top three bits
   vary (`ac`, `8c` in Park, `6c`, `4c`, …) across all cars. The gateway keeps
-  stock's byte 3 when it substitutes.
+  stock's byte 3 when it substitutes. Bit `0x20` tracks "cruise available"
+  (openpilot's `CRUISE_THROTTLE.CRUISE_AVAILABLE`): SHIOKAZE found it on their
+  car, and it agrees on 99.95% of the fleet sample's 755k frames, the rest at
+  on/off transitions. Byte 4 bit `0x40` is "engaged and moving".
+- **`0x180` follows T about 160 ms later** (SHIOKAZE): a signed 12-bit value in
+  byte 2 and byte 3's top nibble, D ≈ −0.796·T + 2067. On the fleet sample it is
+  on panda **bus 0** for Nissan A cars, and the best segments fit D = −0.798·T +
+  2070 at correlation −0.999 (RMSE 1.1); the median segment's RMSE is 8, and it
+  departs when something else (pedal, friction brake) drives the car. Whether it's
+  the VCM's actual response or just a reflection of the request is open, but
+  since the comma can read it directly it's a candidate check that the car
+  follows what openpilot sent, i.e. that the gateway is really relaying.
 - **Accel scale (provisional):** fitting acceleration measured from wheel speed to
   T during ICC, across the 37-car sample, gives correlation −0.76. Zero is near
   T ≈ 2530, about +0.8 m/s² at 2272 and −0.8 at 2784, flatter in between. The
