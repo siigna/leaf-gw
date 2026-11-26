@@ -200,3 +200,7 @@ all pass before any order:
    interference, minimum wall thickness and connector clearance. Print in ASA or
    PETG, not PLA: a cabin behind the windshield gets hotter than PLA's ~55 °C
    softening point, and the relay is only rated to +70 °C.
+   Printable by anyone: no supports, flat on the bed, fits a small (≤ 180 mm)
+   bed, and fine in PETG on an open printer. Ship STL plus a pre-oriented 3MF;
+   ASA wants an enclosed printer (tested target: Bambu H2D), and print services
+   (e.g. JLC3DP) can print it for people without one.
