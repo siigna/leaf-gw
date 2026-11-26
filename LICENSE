@@ -19,3 +19,11 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+---
+
+The ESCargot name and snail logo (including hardware/board/art/) are not
+covered by the license above. They are Copyright (c) 2026 Stephen Bouche, all
+rights reserved, except that boards built unmodified from this repository's
+hardware files may carry the logo as it appears in those files. Remove the logo
+from modified designs and from anything else derived from this repository.
