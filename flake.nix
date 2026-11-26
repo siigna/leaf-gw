@@ -9,9 +9,16 @@
       url = "github:RetroPilot/ocelot";
       flake = false;
     };
+
+    # Board fab outputs: jlcfootprint (pure Python, MIT) works out each part's
+    # JLCPCB CPL rotation from the part's EasyEDA footprint.
+    jlctools = {
+      url = "github:Bouni/kicad-jlcpcb-tools";
+      flake = false;
+    };
   };
 
-  outputs = { self, nixpkgs, ocelot }:
+  outputs = { self, nixpkgs, ocelot, jlctools }:
     let
       systems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
       forAll = f: nixpkgs.lib.genAttrs systems (s: f nixpkgs.legacyPackages.${s});
@@ -22,6 +29,18 @@
         KICAD9_FOOTPRINT_DIR = "${pkgs.kicad-small.libraries.footprints}/share/kicad/footprints";
       };
       boardPython = pkgs: pkgs.python313.withPackages (ps: [ ps.skidl ]);
+      # Board layout (hardware/board/layout): KiCad 10's pcbnew Python module,
+      # kicad-cli, freerouting. pcbnew is built against pkgs.python3, so
+      # `kicad-python` is that interpreter with pcbnew on its path.
+      layoutTools = pkgs:
+        let
+          py = pkgs.python3.withPackages (ps: [ ps.shapely ]);
+          kicadPython = pkgs.writeShellScriptBin "kicad-python" ''
+            export PYTHONPATH=${pkgs.kicad-small.src}/lib/${pkgs.python3.libPrefix}/site-packages''${PYTHONPATH:+:$PYTHONPATH}
+            export JLCTOOLS=''${JLCTOOLS:-${jlctools}}
+            exec ${py}/bin/python3 "$@"
+          '';
+        in [ kicadPython pkgs.kicad-small pkgs.freerouting pkgs.zip ];
     in {
       packages = forAll (pkgs: {
         # `nix build` compiles the pure core and runs the host test suite.
@@ -108,6 +127,16 @@
           touch $out
         '';
 
+        # Board layout (SPEC.md phase 3): DRC (errors, warnings, unconnected),
+        # netlist parity, pair/plane/12 V/keepout/copper-safety/silkscreen checks,
+        # their mutation tests, and the fab outputs being up to date.
+        board-layout = pkgs.runCommand "leaf-gw-board-layout"
+          ({ nativeBuildInputs = [ (boardPython pkgs) ] ++ layoutTools pkgs; } // boardEnv pkgs) ''
+          cp -r ${./hardware/board} board && chmod -R u+w board
+          HOME=$TMPDIR bash board/check_layout.sh
+          touch $out
+        '';
+
         openpilot-long = pkgs.runCommand "leaf-gw-openpilot-long-test"
           { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.numpy ])) ]; } ''
           cp ${./openpilot/leaf_gw_long.py} leaf_gw_long.py
@@ -137,7 +166,7 @@
         };
 
         # Board design (hardware/board): `./hardware/board/check.sh`.
-        hardware = pkgs.mkShell ({ packages = [ (boardPython pkgs) ]; } // boardEnv pkgs);
+        hardware = pkgs.mkShell ({ packages = [ (boardPython pkgs) ] ++ layoutTools pkgs; } // boardEnv pkgs);
 
         # Run the opendbc car-port and panda-safety patches' test suites.
         # opendbc needs Python < 3.13 (pycapnp); libsafety builds with cc + cffi.

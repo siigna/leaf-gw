@@ -1,0 +1,85 @@
+Designator,Footprint,Rotation added,Offset (dx dy mm),Source
+C1,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C2,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C3,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C4,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C5,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C6,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C7,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C8,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C9,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C10,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C11,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C12,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C13,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C14,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C15,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C16,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C17,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C18,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C19,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C20,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C21,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C22,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C23,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C24,C_0805_2012Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C25,C_0805_2012Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C26,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C27,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C28,C_0805_2012Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C29,C_0805_2012Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C30,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C31,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C32,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C33,C_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+C34,C_0402_1005Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D1,LED_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D5,D_SOD-123,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D6,D_SMB,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D7,D_SMA,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D8,D_SMA,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D9,D_SOD-123,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D10,D_SOD-123,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D11,LED_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D12,D_SOD-123,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+D21,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
+D22,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
+D23,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
+F1,Fuse_1206_3216Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+J1,Molex_iGrid_501645-1820_2x09_P2.00mm_Vertical,0,0 0,project footprint drawn from the EasyEDA footprint of C504976 in its own orientation; verify origin
+J2,Molex_iGrid_501645-1820_2x09_P2.00mm_Vertical,0,0 0,project footprint drawn from the EasyEDA footprint of C504976 in its own orientation; verify origin
+J3,USB_C_Receptacle_HRO_TYPE-C-31-M-12,0,0 -1.571,"kicad-jlcpcb-tools truth.csv: C165948 at 0 -> 0, origin dy -1.571 mm (resolver on EasyEDA footprint)"
+K1,Relay_DPDT_Omron_G6K-2F-Y,270,0 0,matthewlai/JLCKicadTools cpl_rotations_db.csv 270; verify
+L1,L_Sunlord_SWPA4030S,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+Q1,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
+R1,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R2,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R3,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R4,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R5,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R6,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R7,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R8,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R9,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R10,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R11,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R12,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R13,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R14,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R15,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R16,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R17,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R18,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R19,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+R20,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+SW1,SW_Push_1P1T_XKB_TS-1187A,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+U1,LQFP-64_10x10mm_P0.5mm,270,0 0,matthewlai/JLCKicadTools cpl_rotations_db.csv '^LQFP-' 270; verify
+U2,SOIC-8_3.9x4.9mm_P1.27mm,270,0 0,matthewlai/JLCKicadTools cpl_rotations_db.csv '^SOIC-' 270; kicad-jlcpcb-tools jlcfootprint README: SOIC-8 -BL needs 270 (JLC preview)
+U3,SOIC-8_3.9x4.9mm_P1.27mm,270,0 0,matthewlai/JLCKicadTools cpl_rotations_db.csv '^SOIC-' 270; kicad-jlcpcb-tools jlcfootprint README: SOIC-8 -BL needs 270 (JLC preview)
+U4,SOIC-8_3.9x4.9mm_P1.27mm,270,0 0,matthewlai/JLCKicadTools cpl_rotations_db.csv '^SOIC-' 270; kicad-jlcpcb-tools jlcfootprint README: SOIC-8 -BL needs 270 (JLC preview)
+U5,SOT-23-5,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23-5 LMV321 at 0 -> 180 (JLC preview)
+U6,SOT-23-5,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23-5 LMV321 at 0 -> 180 (JLC preview)
+U7,SOT-23-6,180,0 0,kicad-jlcpcb-tools jlcfootprint README / truth.csv: SOT-23 family 180 (JLC preview); verify
+U8,SOT-23-3,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
+U9,SOT-23-6,180,0 0,kicad-jlcpcb-tools jlcfootprint README / truth.csv: SOT-23 family 180 (JLC preview); verify
+Y1,Crystal_SMD_5032-2Pin_5.0x3.2mm,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"

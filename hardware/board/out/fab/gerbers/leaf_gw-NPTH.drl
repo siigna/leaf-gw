@@ -1,0 +1,27 @@
+M48
+; DRILL file (leaf-gw fab.py)
+; FORMAT={-:-/ absolute / metric / decimal}
+;#@! TF.CreationDate,2026-01-01T00:00:00+00:00
+; #@! TF.GenerationSoftware,Kicad,Pcbnew,10.0.8
+; #@! TF.FileFunction,NonPlated,1,4,NPTH
+FMAT,2
+METRIC
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T1C0.650
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T2C1.400
+; #@! TA.AperFunction,NonPlated,NPTH,ComponentDrill
+T3C2.200
+%
+G90
+G05
+T1
+X148.71Y-143.9
+X154.49Y-143.9
+T2
+X107.7Y-130.7
+X173.5Y-130.7
+T3
+X103.0Y-103.0
+X172.0Y-147.0
+M30

@@ -1,8 +1,12 @@
 # leaf-gw board
 
-The inline gateway board from [SPEC.md](SPEC.md). This is phase 2: the
-schematic as SKiDL code, the BOM with LCSC numbers, and the checks that stand
-in for a schematic review. Layout is phase 3.
+The inline gateway board from [SPEC.md](SPEC.md). Phase 2 is the schematic as
+SKiDL code, the BOM with LCSC numbers, and the checks that stand in for a
+schematic review. Phase 3 is the layout: a 75 × 50 mm, 4-layer board built by
+script from the netlist, routed (pairs by script, the rest by freerouting),
+checked, and turned into JLCPCB fab files. Nobody reviews the layout by eye, so
+the checks are the review; each of them has a mutation test that proves it
+fails on a broken board.
 
 ## Files
 
@@ -15,11 +19,16 @@ in for a schematic review. Layout is phase 3.
 | `out/bom_jlcpcb.csv` | JLCPCB BOM: Comment, Designator, Footprint, LCSC |
 | `out/parts.csv` | the same parts with manufacturer, MPN, JLC basic/extended and stock as checked |
 | `out/no_connects.csv` | every pin left unconnected on purpose, with its reason |
-| `checks/` | netlist reader, safety-net checks, BOM/footprint checks, mutation tests |
-| `check.sh` | runs all of it |
+| `checks/` | netlist reader, safety-net checks, BOM/footprint checks, mutation tests; `layout.py` and `test_layout_mutations.py` for the PCB |
+| `check.sh` | runs the schematic checks (`board-schematic`) |
+| `layout/` | the PCB build: `build.py`, `placement.py`, `routes.py`, `repair.py`, `board.py` (rules, stack-up, net classes), `impedance.py`, `logo.py`, `fab.py`, `render.sh` |
+| `layout/leaf_gw.kicad_pcb`, `.kicad_pro`, `.kicad_dru` | the generated board, project (net classes, JLC rules) and custom DRC rules |
+| `out/fab/` | gerbers + drill, `leaf_gw-gerbers.zip`, JLC BOM and CPL, the CPL rotation corrections with their sources |
+| `out/render/` | `top.png`, `bottom.png` (3D) and SVG plots of each copper layer and the assembly view |
+| `check_layout.sh` | runs the PCB checks (`board-layout`) |
 
-`out/` is generated, but committed so phase 3 and reviewers have it; the check
-fails if it is stale.
+`out/` and `layout/leaf_gw.*` are generated, but committed so the next phase
+and the board house have them; the checks fail if they are stale.
 
 There is no `.kicad_sch`: SKiDL 2.2.1 generates schematics only for KiCad 5 to
 8 (`gen_schematic` for KiCad 9 and later is an unimplemented stub), and KiCad 10's
@@ -31,7 +40,7 @@ between phases.
 ```bash
 nix develop .#hardware --command ./hardware/board/check.sh            # check
 nix develop .#hardware --command ./hardware/board/check.sh --update   # after editing schematic/
-nix flake check                                                       # includes board-schematic
+nix flake check                                                       # includes board-schematic and board-layout
 ```
 
 `nix flake check` copies the flake's git tree, so new files have to be
@@ -80,6 +89,334 @@ Stages, in order (one failing stage doesn't stop the others):
    rail, OR diode reversed, missing LCSC, duplicated designator, pin without a
    pad, and more), plus the unmutated netlist passing everything.
 
+## Layout (phase 3)
+
+### Pipeline
+
+`layout/build.py` builds `layout/leaf_gw.kicad_pcb` from `out/leaf_gw.net`.
+It takes about 40 minutes, most of it in the pre-route searches and freerouting.
+
+1. **Project and rules.** It writes `leaf_gw.kicad_pro` (net classes, the JLC
+   minimums, DRC severities) and `leaf_gw.kicad_dru` (12 V track width, via
+   drill and ring).
+2. **Board.** A 75 × 50 mm outline with 1 mm corner radii goes on a 4-layer
+   board. Every footprint comes from the netlist with its fields and pad nets,
+   placed by `placement.py`, all on the top side. Two M2 mounting holes go in
+   opposite corners.
+3. **Critical routes by script** (`routes.py`). The four CAN pairs and the USB
+   pair are drawn coupled at the impedance geometry, split evenly around their
+   tap clusters, and length-matched with small rectangular bumps (`TUNE`).
+   freerouting has no differential-pair support, so the pairs never reach it.
+   The same file draws a few hand routes into spots freerouting can't reach:
+   CC1, SWDIO, the MCU supply pins boxed in by their neighbours, and the
+   USBLC6's VBUS via.
+4. **Fanout** (`build.fanout`). Each SMD pad on GND or +3V3 gets a via to its
+   plane. So does each signal pin the CAN lines close in on (`routes.FANOUT_SIGNALS`).
+   A spot is accepted only where the via's In1 antipad stays clear of the GND
+   plane under the pairs.
+5. **Pre-routes** (`repair.preroute`, list in `routes.PREROUTE`). The long
+   12 V pass-throughs (IGN, VIN12_10/12, VIN_PROT), the transceivers' STB
+   lines and the MCU's top-row CAN pins and BOOT0 are routed first with the
+   grid router (step 8), while the board is still open. Each search is capped
+   (8 M expansions, 900 s, a box 14 mm around its ends) and logs why it gave
+   up; whatever fails is left to freerouting.
+6. **Silkscreen.** Library silkscreen that would print on a pad or overlap
+   other silkscreen is dropped (`silk_cleanup`). Then the logo, the text, the
+   back-side pin names and the bench warning go on.
+7. **freerouting.** The board is exported to DSN and the DSN is patched. In1
+   and In2 become power layers, so nothing routes on them. The pairs and the
+   plane nets leave the network, and their copper turns into keepouts. Each
+   pair also gets a via keepout as wide as the reference-plane check needs,
+   and the strip between J2's edge-side pin row and the board edge gets one
+   too (`routes.VIA_KEEPOUT`: via antipads there pinch the In2 plane). New vias
+   use a padstack 0.05 mm wider than the real one, so freerouting's via-to-via
+   clearance also keeps 0.5 mm hole to hole; they are shrunk back after the
+   import. freerouting 2.5 then runs single-threaded (`-mt 1`) with a fixed
+   pass count (wall time capped at 900 s), and the SES is imported back.
+8. **Repair.** If freerouting leaves anything open, `repair.py` routes it on a
+   0.05 mm grid (A* over F.Cu and B.Cu with vias, capped at 4 M expansions
+   and 240 s per search), clear of every other net's copper and of the via
+   keepouts. On the committed board freerouting finished everything, so the
+   repair had nothing to do.
+9. **Clean-up and zones.** Tracks that freerouting necked below the minimum
+   are widened back where there is room (`widen_necks`); one that can't be
+   widened is taken out and its gap repaired at full width. The zones go on:
+   In1 solid GND, In2 solid +3V3, and GND pours on F.Cu and B.Cu with thermal
+   reliefs, and are filled. Then `drop_dangling` deletes every via joined on
+   fewer than two layers and every track with a loose end (freerouting's
+   leftovers, fanout and escape vias it bypassed), one at a time and only if
+   nothing comes apart without it.
+10. **Normalise.** Every UUID is renumbered in file order from a fixed
+   namespace, so the same inputs give the same file, and `leaf_gw.kicad_pro`
+   is written again after pcbnew's save (which rewrites it).
+
+`layout/fab.py` then writes `out/fab/` and `layout/render.sh` writes
+`out/render/`.
+
+### Placement
+
+`placement.py` and `routes.py` are drawn on the first, 59 × 39.5 mm board.
+That was too dense: freerouting and the repair left 1 to 3 connections open
+on every run. `board.spread()` opens the drawing up into the 75 × 50 mm
+outline by moving whole blocks rigidly. It adds 4, 7 and 5 mm in x at three
+vertical cuts (J1's pin field | the clusters and MCU, ADAS side and relay |
+car side, car side | J2's pin field), 3 mm in y below the top band and 7.5 mm
+below CAN0, between the headers. Only straight runs along the shift cross a
+cut, so every scripted route keeps its shape (`routes._spread` asserts it),
+and the pair lengths change equally on both lines. A 70 × 45 mm version of
+the same spread still left one connection open (CAN2_STB, then RELAY_GATE),
+so the board went to the 75 × 50 mm limit.
+
+The two headers sit on the short edges in the same orientation: rotation 90,
+pin 1 at the bottom, the even row toward +x. Pin n of J1 and pin n of J2 are
+then at the same height, so the pass-through nets run straight across. The
+blocks are:
+
+| where | what |
+|---|---|
+| top left | CAN2 (V-CAN tap): ESD array, transceiver 3, termination, between the CAN2 lines |
+| top right | power entry next to J2's IGN pin: PTC, TVS, reverse diode, input caps, the buck |
+| middle left | CAN1 ADAS side next to J1: ESD array, transceiver 1, termination |
+| middle | the relay on all four CAN1 lines, between the two halves |
+| middle right | CAN1 car side: ESD array, transceiver 2, termination; the LDO above it |
+| across | CAN0, straight through |
+| bottom | MCU (crystal and decoupling at its pins), USB-C on the bottom edge with the USBLC6 beside it, relay driver and watchdog, SWD pads, DFU button, ignition sense |
+
+Each CAN tap cluster sits between its own two bus lines, L over the top and H
+underneath. The ESD array (rotation 180, pads 1/2 on its right) faces the
+transceiver's CANL/CANH pins (rotation 180, pins 6/7 on its left) across a
+0.77 mm channel. Short spurs drop into that channel from each line. This is
+how the lines tap the cluster without crossing each other, so the CAN copper
+needs no vias at all.
+
+The relay is DPDT, pole B (L) in the left column and pole A (H) in the right.
+ADAS L lands on COM_B from the left. ADAS H passes between COM_B and NC_B to
+COM_A from inside. Car L lands on NC_B and leaves between COM_A and NC_A. Car
+H passes under NC_B to NC_A. None of the four lines crosses another.
+
+### Stack-up and impedance
+
+JLC04161H-7628, 1.6 mm, as listed at
+[jlcpcb.com/impedance](https://jlcpcb.com/impedance) (read 2026-11-26):
+
+| layer | role | copper | to next layer |
+|---|---|---|---|
+| L1 F.Cu | signal (pairs) | 35 µm | 7628 prepreg 0.2104 mm, εr 4.4 |
+| L2 In1.Cu | GND plane | 15.2 µm | core 1.065 mm, εr 4.6 |
+| L3 In2.Cu | +3V3 plane | 15.2 µm | 7628 prepreg 0.2104 mm, εr 4.4 |
+| L4 B.Cu | signal | 35 µm | |
+
+`layout/impedance.py` computes the pairs as edge-coupled microstrip on L1 over
+L2. The single line uses Hammerstad & Jensen with the finite-thickness
+correction; the coupling uses Garg & Bahl's even/odd capacitances. Both are
+static and ignore solder mask, which lowers the impedance by a few percent.
+IPC-2141A is shown as a coarse cross-check:
+
+| pair | width | gap | Zdiff (Garg-Bahl) | IPC-2141A | target |
+|---|---|---|---|---|---|
+| CAN (4 pairs) | 0.19 mm | 0.20 mm | 120.0 Ω | 111 Ω | 120 Ω |
+| USB D+/D− | 0.35 mm | 0.20 mm | 89.8 Ω | 81 Ω | 90 Ω |
+
+As a sanity check, the same single-line model puts 50 Ω at 0.36 mm on this
+stack-up. Before ordering, confirm both pairs in JLC's own impedance
+calculator, which includes the mask. You may also order "impedance control"
+on this stack-up (see Ordering).
+
+### JLCPCB rules
+
+The rules come from [jlcpcb.com/capabilities/pcb-capabilities](https://jlcpcb.com/capabilities/pcb-capabilities)
+(multilayer, 1 oz, read 2026-11-26). They live in `layout/board.py` and are
+written into the project file:
+
+| rule | board | JLC |
+|---|---|---|
+| track / space | 0.127 / 0.127 mm (SPEC); net classes 0.15 clearance | 0.09 / 0.09 mm |
+| via | 0.3 mm drill / 0.6 mm pad (0.15 mm ring) | 0.15 / 0.25 mm min; ring ≥ 0.15 mm absolute minimum |
+| hole to hole | 0.5 mm | 0.2 (vias), 0.45 (pads) |
+| copper to routed edge | 0.25 mm | 0.2 mm |
+| silkscreen | 0.15 mm line, 1.0 mm text, 0.15 mm from pads | the same |
+| 12 V input (IGN, IGN_FUSED, VIN_PROT, VIN12_10/12) | ≥ 0.5 mm (custom DRC rule) | |
+
+Net classes: CAN 0.19 mm, USB 0.35 mm, 12V 0.67 mm, Power 0.4 mm and Default
+0.17 mm. Two of these are wider than the floor on purpose. Where freerouting
+squeezes between pads it necks a track to about 3/4 of its class width, and
+these class widths keep a necked track at or above 0.127 mm and 0.5 mm.
+
+### Checks
+
+`check_layout.sh` (flake check `board-layout`) runs these stages:
+
+1. **Self-checks.** The impedance geometries are within 3 % of target, and
+   the logo conversion works: the cleaned logo has no line or gap under
+   0.15 mm, and a keyholed polygon with holes survives the round trip.
+2. **Freshness.** `leaf_gw.kicad_pro` and `.kicad_dru` match the generator.
+3. **DRC.** `kicad-cli pcb drc --severity-all` reports 0 errors, 0 warnings
+   and 0 unconnected items, against the JLC rules above. Schematic parity is
+   left to stage 4, because there is no schematic.
+4. **Layout checks** (`checks/layout.py`). They work on pcbnew's own copper
+   shapes, independent of the build scripts:
+   - parity: every netlist part is on the board with its footprint, every pad
+     has the netlist net of (ref, pad), and pads the netlist leaves open have
+     none. Nothing extra is allowed except H1, H2 and LOGO;
+   - every footprint is on the top side;
+   - pairs: all pair copper is on F.Cu, with no via, at the impedance width.
+     The only narrower pieces allowed are the USB plug-flip links within
+     2.5 mm of J3. Outside the listed `routes.UNCOUPLED` zones (header pin
+     fields, the cluster splits, the relay, the USBLC6, the tuning bumps),
+     each line sits exactly width + gap from its partner (±10 µm);
+   - mismatch: the H/L copper length from the reference end to each bus end
+     and transceiver is under 1 mm. The lengths are computed over the track
+     graph and printed;
+   - reference plane: under every pair track, the In1 GND fill covers the
+     track width plus one prepreg height (0.21 mm) on each side, so there is
+     no split, no void and no other net's antipad. The header pin fields and
+     the USBLC6 are exempt; their own PTH and via antipads are unavoidable;
+   - 12 V: every IGN, IGN_FUSED, VIN_PROT and VIN12 track is ≥ 0.5 mm;
+   - keepouts: no other courtyard sits within 0.5 mm of either header body
+     (the mating face). The USB-C front is at the bottom edge (−0.1 to
+     +0.6 mm), and no courtyard sits in the 12.35 mm plug-overmold zone along
+     that edge;
+   - copper safety: islands are built by physical overlap of every pad,
+     track, via and zone fill, per layer and through the holes, ignoring
+     their net labels. No island may join two netlist nets, or a net and an
+     open pad, and every net must be one island. The relay COM pads reach
+     only the ADAS-side lines and the NC pads only the car side, so the two
+     CAN1 halves touch only through the contacts. Box pins J2.9 and J2.11
+     touch no track or zone on any layer;
+   - silkscreen: the logo, as drawn on the board, has lines and gaps of at
+     least 0.15 mm, is about 12 mm wide and sits on the top. No silkscreen on
+     either side comes within 0.15 mm of a solder-mask opening or runs off
+     the board.
+5. **Mutation tests** (`checks/test_layout_mutations.py`). Each test loads the
+   real board, breaks it in memory and asserts that its check fails for the
+   intended reason:
+
+   | mutation | caught by |
+   |---|---|
+   | two pads' nets swapped | parity |
+   | a footprint deleted | parity |
+   | an extra footprint added | parity |
+   | a capacitor flipped to the bottom | top side |
+   | a CAN0_L run moved 0.3 mm | pairs (uncoupled) |
+   | a via dropped into CAN0_H | pairs (via) |
+   | a CAN2_L run moved to B.Cu | pairs (layer) |
+   | a USB D+ run narrowed to 0.2 mm | pairs (width) |
+   | a 1.2 mm detour added to CAN0_H | mismatch |
+   | a 1 mm slot cut in In1 under CAN0 | reference plane |
+   | the In1 GND zone deleted | reference plane |
+   | an IGN track narrowed to 0.3 mm | 12 V width |
+   | a resistor moved onto J1's mating face | keepouts |
+   | J3 moved 2 mm in from the edge | keepouts |
+   | a resistor moved into the USB plug zone | keepouts |
+   | a track across relay COM_A to NC_A | copper safety (short) |
+   | the ADAS L track to COM_B removed | copper safety (open) |
+   | a track touching J2.9 | copper safety (box pin) |
+   | a pass-through loop's tracks removed | copper safety (open) |
+   | the logo moved onto MCU pins | silkscreen (pad opening) |
+   | a 0.1 mm line added to the logo | silkscreen (line width) |
+   | a CAN0_H stub run into CAN0_L, saved and run through `kicad-cli pcb drc` | DRC |
+
+   The unmutated board must pass every check.
+6. **Fab outputs.** `fab.py` must reproduce `out/fab/` byte for byte. The fab
+   BOM must match `out/bom_jlcpcb.csv` part for part (LCSC, footprint, MPN),
+   every BOM line must have an LCSC number, and the CPL must list exactly the
+   BOM parts.
+
+`./check_layout.sh --rebuild` also rebuilds the board in a temp dir and
+requires it to match the committed one byte for byte. That takes freerouting's
+40 minutes, so the flake check leaves it out.
+
+### Regenerating
+
+```bash
+nix develop .#hardware --command ./hardware/board/check_layout.sh --update   # rebuild board, fab, renders; then check
+nix develop .#hardware --command ./hardware/board/check_layout.sh            # check only
+```
+
+After editing `placement.py` or `routes.py`, look at the mismatch report that
+`checks/layout.py` prints and adjust `routes.TUNE` if a pair moved.
+
+### Ordering (JLCPCB)
+
+**PCB:** upload `out/fab/leaf_gw-gerbers.zip`. Pick these options:
+
+- Layers 4, dimensions 75 × 50 mm (detected), thickness 1.6 mm, FR-4.
+- Impedance control yes, stack-up JLC04161H-7628. That is the stack-up the
+  pair widths were computed for.
+- Via covering tented, which is what the board assumes; silkscreen runs over
+  vias.
+- Green mask, white silkscreen. Surface finish: HASL lead-free, or ENIG for
+  the 0.5 mm-pitch MCU.
+- Remove order number: "specify a location" or pay to remove it. There is no
+  marked spot, so pick "remove".
+- Board outline tolerance standard. Leave edge rails and tooling holes to
+  JLC's assembly options.
+
+**Assembly:** PCBA on the top side, Standard (not Economic). The board has
+through-hole headers and extended parts. Upload:
+
+- `out/fab/leaf_gw-bom.csv` as the BOM. All 37 lines have LCSC numbers.
+- `out/fab/leaf_gw-cpl.csv` as the CPL. Mid X/Y are in mm from the board's
+  bottom-left corner, all parts on the top.
+
+In the placement preview, check every part listed as "verify" in
+`out/fab/leaf_gw-cpl-corrections.csv`. Those are the relay, the MCU, the
+SOT-23-6 parts, the iGrid headers and every polarized two-terminal part,
+whose rotations come from footprint-family tables rather than part-specific
+evidence. Adjust the rotations there if a body or pin-1 mark is off. The
+headers J1/J2 are through-hole on the top side; JLC solders those by
+selective/wave or by hand as part of Standard PCBA. Buy the MCU (C468260,
+90 in stock on 2026-11-26) early.
+
+**The box cable** is a separate order. It is a 501646-1800 receptacle on both
+ends, crimped 501647-1000 terminals, pin n to pin n, positions 9 and 11 left
+empty, 26 AWG, about 100 mm. Order it from a harness service with a drawing,
+for example LCSC Cable ([lcsccable.com](https://lcsccable.com), no MOQ). See
+"Connectors" above for the part numbers. Leaving positions 9 and 11 empty is
+part of the safety design, so state it on the drawing.
+
+### Known limits of the layout
+
+- **Routing is complete.** The committed board passes the DRC with 0 errors,
+  0 warnings and 0 unconnected items, and every layout check and mutation
+  test passes. It was built by `build.py` and then had its dangling vias and
+  stubs removed by the same `drop_dangling` pass `build.py` now ends with
+  (that pass's via test was fixed after the build); a fresh
+  `./check_layout.sh --rebuild` has not been run on it.
+
+- **CAN1 ADAS pair is never coupled.** It runs from J1's pins around
+  transceiver 1 to the relay's COM contacts. All of that is header breakout,
+  cluster split or relay, so its uncoupled zone covers the whole run. The
+  length match still holds (0.00 mm to the transceiver and to the relay). At
+  500 kbit/s and about 30 mm the coupling doesn't matter, but the
+  120 Ω-everywhere ideal isn't met there.
+- **Reference-plane margin is one prepreg height** (0.21 mm beyond the track
+  edge), not two. With two, there were too few via spots for freerouting.
+  The tighter margin still keeps every void and antipad out from under the
+  pairs.
+- **VIN12_10/12 run on the outer layers** now (pre-routed or freerouted at
+  0.5 mm or more; `routes.VIN12_ON_IN2` is off). In2 carries no long copper:
+  `check_in2` limits any In2 copper to 5 mm per net and requires the +3V3
+  fill to stay one region with no neck under 1.0 mm. A 1.0 mm neck of 15.2 µm inner copper carries 0.65 A at 10 °C
+  rise by IPC-2221's internal-conductor formula, a conservative bound next to
+  IPC-2152. That is over 4 × the 150 mA load.
+- **CPL rotations** for the parts marked "verify" are from family tables (see
+  `fab.py`), not from each LCSC part's EasyEDA footprint. The per-part
+  resolver (`jlcfootprint` from kicad-jlcpcb-tools, a flake input) needs
+  EasyEDA's answers recorded first, and fetching them wasn't done here.
+  Running `tools/jlcfootprint/fetch_easyeda_fixture.py` for the 37 LCSC
+  numbers and then its `validate_board.py` on this board would replace the
+  table with per-part rotations.
+- **Silkscreen** text is narrower than KiCad's default: 1.0 mm high, 0.6 to
+  0.8 mm wide, 0.15 mm strokes. The text kept its place from the
+  compact drawing: the copyright
+  line runs above the MCU, the name runs vertically beside J2, and the bench
+  warning sits over J1. The back carries the pin names of both headers and
+  the warning again, large.
+- **Reference designators** are on F.Fab only, not the silkscreen; at this
+  density they would print on pads. The assembly SVG in `out/render/` shows
+  them.
+
 ## Connectors
 
 comma's car-harness cable ends in a Molex **501646-1800** iGrid receptacle
@@ -103,10 +440,11 @@ hole), 503091 (vertical) and 501876 (right angle; the harness box uses
   wrong.
 
 The header footprint is project-local because KiCad's library has no iGrid
-part. Its pads and locator come from LCSC/EasyEDA's footprint for C504976,
-which is what JLCPCB assembles to, because Molex's sales drawing
-(SD-501645-001) could not be downloaded. Check it against that drawing before
-the first order (phase 4).
+part. Its geometry is verified against Molex's drawing SD-501645-001: 0.80 mm
+pin holes (±0.05) in 1.5 mm pads, 2.00 mm pitch both ways, and the 1.4 mm
+locator (1.3 +0.1/−0) 1.2 mm outside the pin 1/2 column and 3.1 mm from the
+lock-side row. The body is 20 × 8.2 mm. `checks/test_footprint.py` pins these
+numbers. The drawing is Molex-proprietary and is not in the repo.
 
 ## Part choices
 

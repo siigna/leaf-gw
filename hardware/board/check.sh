@@ -28,13 +28,22 @@ if [ "${1:-}" = "--update" ]; then
 fi
 
 stage "committed out/ matches the schematic"
-diff -r out "$tmp/out" >/dev/null || { diff -ru out "$tmp/out" | head -40; echo "out/ is stale: ./check.sh --update"; fail=1; }
+# out/fab and out/render are the layout's (check_layout.sh); compare the schematic's files only
+for f in "$tmp"/out/*; do
+  cmp -s "$f" "out/$(basename "$f")" || { diff -u "out/$(basename "$f")" "$f" | head -40; echo "out/ is stale: ./check.sh --update"; fail=1; }
+done
+for f in out/*; do
+  [ -f "$f" ] && [ ! -e "$tmp/out/$(basename "$f")" ] && { echo "$f is not produced by the schematic"; fail=1; }
+done
 
 stage "safety-net checks"
 python3 checks/safety.py out/leaf_gw.net || fail=1
 
 stage "BOM + footprint checks"
 python3 checks/bom.py out/leaf_gw.net out/bom_jlcpcb.csv || fail=1
+
+stage "iGrid header footprint vs Molex SD-501645-001"
+(cd checks && python3 test_footprint.py 2>&1 | tail -1; exit "${PIPESTATUS[0]}") || fail=1
 
 stage "mutation tests (the checks bite)"
 python3 checks/test_mutations.py 2>&1 | tail -3

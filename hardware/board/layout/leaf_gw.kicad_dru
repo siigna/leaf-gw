@@ -1,0 +1,16 @@
+(version 1)
+# leaf-gw custom DRC rules (JLCPCB, SPEC.md "PCB"). Board-wide minimums are in
+# leaf_gw.kicad_pro; these add what the net classes can't say.
+
+(rule "12 V input tracks at least 0.5 mm"
+  (condition "A.NetClass == '12V' && A.Type == 'track'")
+  (constraint track_width (min 0.5mm)))
+
+(rule "silkscreen at least 0.15 mm"
+  (layer "?.Silkscreen")
+  (constraint text_thickness (min 0.15mm)))
+
+(rule "via drill and ring (JLC)"
+  (condition "A.Type == 'via'")
+  (constraint hole_size (min 0.3mm))
+  (constraint annular_width (min 0.15mm)))

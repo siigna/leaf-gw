@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "jlctools": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1795405770,
+        "narHash": "sha256-xdhPK1XveRXbBAjqVs5pYyg/bOZb23dMPbqvrcaJDIE=",
+        "owner": "Bouni",
+        "repo": "kicad-jlcpcb-tools",
+        "rev": "6f44644c9204ef72365c2b7de8328cdd5809e93c",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Bouni",
+        "repo": "kicad-jlcpcb-tools",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1795371335,
@@ -31,6 +47,7 @@
     },
     "root": {
       "inputs": {
+        "jlctools": "jlctools",
         "nixpkgs": "nixpkgs",
         "ocelot": "ocelot"
       }

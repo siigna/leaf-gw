@@ -144,7 +144,11 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
   USB pairs.
 - CAN pairs as 120 Ω differential pairs; USB D+/D− as 90 Ω.
 - 12 V input traces at least 0.5 mm; relay and power pins with thermal relief.
-- Size target: under 60 × 40 mm, both 18-pin connectors on the short edges.
+- Size target: 75 × 50 mm at most (about 70 × 45 aimed for), both 18-pin
+  connectors on the short edges, USB-C on a long edge. The first target,
+  under 60 × 40 mm, was too dense to route: freerouting and the grid repair
+  left 1–3 connections open on every run. At 70 × 45 one connection still
+  stayed open, so the board is 75 × 50 mm.
 - Mounting holes ×2; silkscreen with the pin-1 marks, the bus names, and
   "bench / test car only".
 

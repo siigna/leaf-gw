@@ -3,3 +3,4 @@ test_leaf_gw
 result
 __pycache__/
 *.pyc
+hardware/board/layout/.work/
