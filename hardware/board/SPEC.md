@@ -137,6 +137,18 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
 - Mounting holes ×2; silkscreen with the pin-1 marks, the bus names, and
   "bench / test car only".
 
+### Silkscreen branding
+
+- The ESCargot snail mark, `art/escargot-snail.svg` (copied from
+  `tool/res/art/snail.traced.svg`, the master trace), about 12 mm wide on the
+  top side. Convert it to a footprint by script: flatten the curves to polygons
+  and keyhole the holes, since KiCad graphic polygons can't have holes. Keep
+  every line and gap at least 0.15 mm (JLCPCB's silkscreen minimum).
+- Plain silkscreen text beside it: `ESCargot leaf-gw`, the board revision, and
+  `© 2026 Stephen Bouche · MIT`.
+- The full wordmark and lockup aren't used: their thin script letters break up
+  at this size.
+
 ## Automated checks (the reviewer stand-in)
 
 Nobody will review the layout by eye, so these run in `nix flake check` and must
