@@ -110,67 +110,67 @@ sequenceDiagram
   Note over GW,AB: MCU reset / power-loss → external NC relay<br/>reconnects ADAS ↔ chassis directly = stock<br/>path (no software involved).
 ```
 
-And the **physical wiring** (planned — pins from the 2018 Leaf ESM, relay
-topology functional; source: [`docs/wiring.mmd`](docs/wiring.mmd)). Green is the
-**stock comma install** — the same plug-in Nissan A harness a lateral-only setup
-uses, no splicing. Purple is **our add-on**: a box spliced into the Chassis CAN pair.
-That splice is the entire wiring difference from a stock comma (and from
-StarPilot, which is the stock harness + firmware only):
+And the **physical wiring** (planned; source: [`docs/wiring.mmd`](docs/wiring.mmd)).
+It builds on comma's own Nissan A car harness, which plugs in between the ADAS
+unit and the car loom and already brings the two halves of Chassis CAN out on
+separate wire pairs; the harness box normally just joins them. The gateway sits
+in that join, on a modified car-harness cable. The car's wiring is never cut,
+the harness box and comma stay stock, and swapping the original cable back
+undoes it. Pins and build steps are in [`HARDWARE.md`](HARDWARE.md):
 
 ```mermaid
-%% leaf-gw PLANNED wiring. Two things meet at the Leaf's ADAS module: the STOCK
-%% comma install (a plug-in harness, unchanged from a lateral-only setup) and OUR
-%% interceptor (physically spliced into the Chassis CAN pair). Pins from the 2018 ESM;
-%% relay topology functional; which V-CAN segment is a bench check. Bench only.
-flowchart TB
-  subgraph STOCK["stock comma install — plug-in, NO splicing (same as lateral)"]
+%% leaf-gw PLANNED wiring, built on comma's Nissan A car harness (no cuts to the car).
+%% The car-harness cable plugs in between the ADAS unit and the car loom and brings both
+%% halves of Chassis CAN out separately; the gateway sits where the harness box would
+%% join them. Pins from comma's open Nissan A drawing + the 2018 ESM. Bench only.
+flowchart LR
+  ADAS["ADAS unit<br/>stays LIVE (AEB intact)"]
+  LOOM["car loom<br/>EPS · VCM · ABS"]
+
+  subgraph CABLE["modified car-harness cable"]
+    direction TB
+    A["ADAS-side connector"]
+    C["car-side connector"]
+    A ---|"pass-through<br/>PT1–PT12"| C
+  end
+
+  subgraph GW["leaf-gw gateway (our add-on)"]
+    direction TB
+    CAN1["CAN1 · Chassis ADAS side"]
+    CORE["gw_engine"]
+    CAN2["CAN2 · Chassis car side"]
+    CAN3["CAN3 · V-CAN tap"]
+    RELAY["NC fail-open relay"]
+    CAN1 --> CORE --> CAN2
+    CAN3 --> CORE
+  end
+
+  subgraph STOCK["stock comma install (unchanged)"]
+    direction TB
+    HB["harness box<br/>V-CAN relay (steering)"]
     CF["comma four"]
-    HB["Nissan A harness box<br/>1 relay, cuts the steering bus"]
-    CF ---|OBD-C| HB
+    HB ---|OBD-C| CF
   end
 
-  VCAN{{"V-CAN (M2 pins 1/2)<br/>steering + openpilot's 0x2B0 / 0x1C3"}}
-  ICA{{"Chassis CAN ADAS side (M2 pins 8/9)"}}
-  ICB{{"Chassis CAN chassis side"}}
+  ADAS --- A
+  C --- LOOM
 
-  subgraph CAR["Nissan Leaf ZE1 (stock) — at/around the ADAS module"]
-    ADAS["ADAS unit<br/>stays LIVE (AEB intact)"]
-    EPS["EPS steering"]
-    ABS["ABS actuator + VCM"]
-    PWRCAR["M2 pin 12 IGN +12V · pin 5 GND"]
-  end
+  A ==>|"Chassis CAN<br/>pins 8/9 → CAN1"| CAN1
+  CAN2 ==>|"Chassis CAN<br/>→ car pins 8/9"| C
+  A -.->|"NC bypass"| RELAY -.-> C
 
-  subgraph GW["leaf-gw interceptor — OUR ADD-ON, spliced into Chassis CAN"]
-    CAN3["CAN3 — V-CAN tap (listen)"]
-    CORE["gw_engine<br/>arbitrate · re-stamp · fail-open"]
-    CAN1["CAN1 — ADAS side"]
-    CAN2["CAN2 — chassis side"]
-    RELAY["external NC fail-open relay"]
-    PWRGW["12V in · GND"]
-  end
-
-  %% stock comma: plug in at the ADAS module, drive V-CAN
-  HB ==>|plug-in at ADAS module| VCAN
-  VCAN --> EPS
-  ADAS --- VCAN
-
-  %% our interceptor: tap V-CAN to hear 0x2B0/0x1C3, and CUT the Chassis CAN pair
-  VCAN -. tap .-> CAN3 --> CORE
-  ADAS --- ICA
-  ICA ==>|CUT 8/9| CAN1 --> CORE --> CAN2 ==>|CUT| ICB
-  ICB --> ABS
-  ICA -. NC bypass on reset .-> RELAY -.-> ICB
-  PWRCAR --> PWRGW
+  A -->|"V-CAN pins 1/2<br/>(box 16/18)"| HB
+  A -.->|"tap"| CAN3
+  C -->|"V-CAN (box 4/6)"| HB
+  CAN2 -->|"box 8/7 → comma bus 1"| HB
 
   classDef stock fill:#e6f2e6,stroke:#44aa44
   classDef addon fill:#e6e6fb,stroke:#5555cc
-  classDef bus fill:#fff6d5,stroke:#b59a00
-  classDef ic fill:#fde8e8,stroke:#cc6666
+  classDef cable fill:#fff6d5,stroke:#b59a00
   classDef relay fill:#fdd6d6,stroke:#cc0000
   class CF,HB stock
-  class CAN3,CORE,CAN1,CAN2,PWRGW addon
-  class VCAN bus
-  class ICA,ICB ic
+  class CAN1,CAN2,CAN3,CORE addon
+  class A,C cable
   class RELAY relay
 ```
 
