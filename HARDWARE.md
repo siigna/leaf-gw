@@ -22,7 +22,10 @@ What runs the gateway, and the one part that makes it safe on a car.
 - **OBD Power + splitter** — 12 V/OBD bench power and a bus splitter. Convenience.
 
 Our core (`leaf_gw` + `gw_engine`) ports onto it via `backends/panda/`
-(`gw_panda.c`, the interrupt-driven interceptor).
+(`gw_panda.c`, the interrupt-driven interceptor). The same firmware builds for
+the leaf-gw board (`hardware/board/`, relay and watchdog onboard) with a
+build-time board switch; see `backends/panda/README.md`, and
+`backends/panda/BRINGUP.md` for the first power-on.
 
 A 2-CAN board (e.g. an ESP32-C6) is deliberately **not** supported as the
 interceptor: its two controllers are both consumed by the Chassis CAN cut (ADAS side
@@ -70,7 +73,7 @@ The Nissan A harness has no 12 V wire; power the gateway from IGN.
      Leave box pins 9/11 unconnected.
 3. **NC fail-open relay** across the break: bridges the ADAS-side pair to the
    car-side pair (H↔H, L↔L) when unpowered. The firmware energizes it to open
-   the bypass only once it's running (`relay_engage`), so power loss, reset or a
+   the bypass only once it's running (`gw_supervisor.c`), so power loss, reset or a
    crash puts Chassis CAN back to stock.
 4. **V-CAN tap:** CAN2 orange/green (box pins 16/18), in parallel, to gateway
    **CAN3**. That's the segment openpilot sends `0x2B0`/`0x1C3` on and where

@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Register the leaf_gw project in a RetroPilot ocelot firmware/SConscript.
 
-Idempotent, anchor-based (resilient to line shifts). Adds a `leaf_gw` entry to
-the `projects` dict and links the engine translation units (leaf_gw.c,
-gw_engine.c) into that project's Program(), since panda builds a single main TU.
+Idempotent, anchor-based (resilient to line shifts). Adds two entries to the
+`projects` dict, both built from leaf_gw/main.c (gw_panda.c): `leaf_gw` for the
+Ocelot (board_gateway) and `leaf_gw_board` for the leaf-gw board
+(-DLEAF_GW_BOARD, boards/leaf_gw.h). Links the core translation units
+(leaf_gw.c, gw_engine.c, gw_supervisor.c) into their Program(), since panda
+builds a single main TU.
 
 Usage: ocelot_register.py <path-to-ocelot/firmware/SConscript>
 """
@@ -17,6 +20,11 @@ def register(path: str) -> None:
                  '  "main": "leaf_gw/main.c",\n'
                  '  "startup": "startup_stm32f413xx.s",\n'
                  '  "flags": PROJECT_FLAGS\n'
+                 '  },\n'
+                 '  "leaf_gw_board": {\n'
+                 '  "main": "leaf_gw/main.c",\n'
+                 '  "startup": "startup_stm32f413xx.s",\n'
+                 '  "flags": PROJECT_FLAGS + ["-DLEAF_GW_BOARD"]\n'
                  '  },\n')
         anchor = "projects = {\n"
         if anchor not in s:
@@ -29,9 +37,9 @@ def register(path: str) -> None:
             raise SystemExit("SConscript: main Program() line not found")
         inject = (
             '  leaf_gw_extra = []\n'
-            '  if PROJECT == "leaf_gw":\n'
+            '  if PROJECT in ("leaf_gw", "leaf_gw_board"):\n'
             '    leaf_gw_extra = [panda_env.Object(f"{project_obj_dir}/{n}.o", f"leaf_gw/{n}.c") '
-            'for n in ["leaf_gw", "gw_engine"]]\n'
+            'for n in ["leaf_gw", "gw_engine", "gw_supervisor"]]\n'
         )
         s = s.replace(prog, inject + prog.replace("[startup, MAIN],", "[startup, MAIN] + leaf_gw_extra,"), 1)
 

@@ -50,14 +50,20 @@
           version = "0.1.0";
           src = ./.;
           doCheck = true;
-          buildPhase = "$CC $NIX_CFLAGS_COMPILE -Wall -Wextra -O2 -std=c11 leaf_gw.c gw_engine.c test_leaf_gw.c -lm -o test_leaf_gw";
-          checkPhase = "./test_leaf_gw";
-          installPhase = "mkdir -p $out/bin $out/include && cp test_leaf_gw $out/bin/ && cp leaf_gw.h $out/include/";
+          nativeCheckInputs = [ pkgs.python3 ];
+          buildPhase = ''
+            $CC $NIX_CFLAGS_COMPILE -Wall -Wextra -O2 -std=c11 leaf_gw.c gw_engine.c test_leaf_gw.c -lm -o test_leaf_gw
+            $CC $NIX_CFLAGS_COMPILE -Wall -Wextra -O2 -std=c11 gw_supervisor.c test_gw_supervisor.c -o test_gw_supervisor
+          '';
+          # the supervisor's mutation run proves its tests bite (tools/mutate_supervisor.py)
+          checkPhase = "./test_leaf_gw && ./test_gw_supervisor && python3 tools/mutate_supervisor.py";
+          installPhase = "mkdir -p $out/bin $out/include && cp test_leaf_gw test_gw_supervisor $out/bin/ && cp leaf_gw.h $out/include/";
         };
       }
-      # The panda/Ocelot firmware image. STM32 cross build (gcc-arm-embedded +
-      # scons), offline; copies the backend + engine into the ocelot tree,
-      # registers the scons project, and signs with the debug cert.
+      # The firmware images, both boards from one ocelot tree: leaf_gw (Ocelot)
+      # and leaf_gw_board (our board, -DLEAF_GW_BOARD). STM32 cross build
+      # (gcc-arm-embedded + scons), offline; copies the backend + core into the
+      # tree, registers the scons projects, and signs with the debug cert.
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         ocelot-firmware = pkgs.stdenv.mkDerivation {
           pname = "leaf-gw-ocelot-firmware";
@@ -76,18 +82,28 @@
             chmod -R u+w octree
             mkdir -p octree/leaf_gw
             cp backends/panda/gw_panda.c octree/leaf_gw/main.c
-            cp leaf_gw.c leaf_gw.h gw_engine.c gw_engine.h octree/leaf_gw/
+            cp backends/panda/board_leaf_gw.h octree/boards/leaf_gw.h
+            cp leaf_gw.c leaf_gw.h gw_engine.c gw_engine.h gw_supervisor.c gw_supervisor.h octree/leaf_gw/
             cp octree/smart_dsu/can.h octree/leaf_gw/can.h
             patchShebangs octree/crypto
             python3 backends/panda/ocelot_register.py octree/SConscript
-            ( cd octree && PROJECT=leaf_gw scons -u -j"$NIX_BUILD_CORES" )
+            for p in leaf_gw leaf_gw_board; do
+              ( cd octree && PROJECT=$p scons -u -j"$NIX_BUILD_CORES" )
+            done
+            # build-time board selection took: only our image carries board_leaf_gw
+            # (no grep -q: under pipefail an early exit can SIGPIPE nm; no `!`: set -e ignores it)
+            arm-none-eabi-nm octree/obj/leaf_gw_board/leaf_gw_board.elf | grep ' board_leaf_gw$' > /dev/null
+            if arm-none-eabi-nm octree/obj/leaf_gw/leaf_gw.elf | grep ' board_leaf_gw$' > /dev/null; then
+              echo "Ocelot image carries board_leaf_gw"; exit 1
+            fi
             runHook postBuild
           '';
           installPhase = ''
             mkdir -p $out
-            cp octree/obj/leaf_gw.bin.signed $out/leaf_gw.bin.signed
-            cp octree/obj/leaf_gw/leaf_gw.elf $out/leaf_gw.elf
-            cp octree/obj/leaf_gw/leaf_gw.bin $out/leaf_gw.bin
+            cp octree/obj/bootstub.bin $out/bootstub.bin
+            for p in leaf_gw leaf_gw_board; do
+              cp octree/obj/$p.bin.signed octree/obj/$p/$p.elf octree/obj/$p/$p.bin $out/
+            done
           '';
         };
       });
@@ -158,7 +174,7 @@
         '';
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        # CI coverage that the panda/Ocelot firmware still compiles, links and signs.
+        # CI coverage that both firmware images (Ocelot, leaf-gw board) compile, link and sign.
         ocelot-firmware = self.packages.${pkgs.system}.ocelot-firmware;
       });
 

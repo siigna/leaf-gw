@@ -1,10 +1,13 @@
 /* SPDX-License-Identifier: MIT
  * Copyright (c) 2026 Stephen Bouche. See LICENSE and ATTRIBUTION.md. */
 /* gw_panda.c -- comma-panda / RetroPilot Ocelot firmware entry for the Leaf
- * Chassis CAN gateway (STM32F413 Ocelot Pro, 3x TJA1042).
+ * Chassis CAN gateway. Two boards, picked at build time:
+ *   Ocelot Pro (STM32F413, 3x TJA1042)       scons project leaf_gw
+ *   the leaf-gw board (hardware/board)        scons project leaf_gw_board
+ *                                             (-DLEAF_GW_BOARD, boards/leaf_gw.h)
  *
- * !!! UNTESTED, BENCH-ONLY. Validate the 0x2B0/0x1C3 layouts on a real ZE1
- * (tracker issue #5) and prove the external fail-open relay reverts to stock on
+ * !!! UNTESTED ON HARDWARE, BENCH-ONLY. Validate the 0x2B0/0x1C3 layouts on a
+ * real ZE1 (tracker issue #5) and prove the fail-open relay reverts to stock on
  * reset/power-loss before this touches a car anyone drives. !!!
  *
  * Shape follows the RetroPilot ocelot `smart_dsu` MITM reference (comma panda,
@@ -16,9 +19,11 @@
  * Bus map (Ocelot H1): CAN1 = ADAS side (bus 0), CAN2 = chassis side (bus 1),
  *                      CAN3 = V-CAN tap: reads openpilot's real 0x2B0/0x1C3.
  *
- * Fail-open: the Ocelot has NO onboard relay. An EXTERNAL normally-closed relay
- * on the Chassis CAN cut (driven from RELAY_GPIO below) must connect ADAS<->chassis
- * directly when de-energized (reset/brown-out/IWDG trip). See ../../HARDWARE.md.
+ * Fail-open: a normally-closed relay on the Chassis CAN cut joins ADAS<->chassis
+ * when de-energized (reset/brown-out/IWDG trip). On the leaf-gw board it is
+ * onboard and also gated by a TPS3828 watchdog; the Ocelot has none, so wire an
+ * external one to PB12 (see ../../HARDWARE.md). gw_supervisor.c sequences it:
+ * transceivers -> relay -> forwarding; on a fault, forwarding off -> relay off.
  */
 #include "../config.h"
 #include "libc.h"
@@ -58,6 +63,10 @@ static void usb_outep3_resume_if_paused(void) { }
 #include "can.h"
 
 #include "gw_engine.h"
+#include "gw_supervisor.h"
+#ifdef LEAF_GW_BOARD
+  #include "boards/leaf_gw.h"
+#endif
 
 /* Headless: no serial console. The board/harness headers log through these;
  * stub them to no-ops. (drivers/uart.h defines the real ones -- include it
@@ -81,18 +90,62 @@ static int  op_pressure = 0;
 static bool op_engaged = false;
 static bool op_brake = false;
 
-/* External NC fail-open relay drive. CONFIRM the pin for your Ocelot wiring
- * (broken-out H4/H5 GPIO or an IGN_OUT-gated FET). High = energized = MCU in
- * circuit (Chassis CAN cut, gateway bridges); low/reset = relay closed = stock. */
-#define RELAY_PORT GPIOB
-#define RELAY_PIN  12U
-
 static gw_state S;
+static sup_t SUP;
 
-static inline uint32_t now_ms(void) { return TIM2->CNT / 1000U; } /* TIM2 = 1us */
+/* Set by the main loop (sup_hw_forward), read by the RX interrupts. Main never
+ * preempts an ISR, so once it writes false no new chassis frame is queued. */
+static volatile bool fwd_on = false;
+/* RX liveness and bus-off, written by the ISRs, read by the supervisor. */
+static volatile uint32_t adas_rx_cnt = 0U;
+static volatile uint32_t car_rx_cnt = 0U;
+static volatile bool bus_off_seen = false;
 
-static void relay_engage(bool mcu_in_circuit) {
-  set_gpio_output(RELAY_PORT, RELAY_PIN, mcu_in_circuit);
+static inline uint32_t now_ms(void) { return TIM2->CNT; } /* TIM2 = 1 kHz, wraps at 2^32 ms */
+
+/* ---- supervisor hardware seam ---- */
+void sup_hw_forward(bool on) {
+  static bool was_on = false;
+  fwd_on = on;
+  if (was_on && !on) {
+    /* drop chassis frames still queued, so none goes out after the relay rejoins the bus */
+    can_clear(&can_tx1_q);
+    can_clear(&can_tx2_q);
+    llcan_clear_send(CAN1);
+    llcan_clear_send(CAN2);
+  }
+  was_on = on;
+}
+
+void sup_hw_xcvr(bool on) {
+  for (uint8_t i = 1U; i <= 3U; i++) {
+    current_board->enable_can_transceiver(i, on);
+  }
+}
+
+void sup_hw_led(bool on) { current_board->set_led(LED_GREEN, on); }
+
+#ifdef LEAF_GW_BOARD
+void sup_hw_relay(bool on) { leaf_gw_relay(on); }
+void sup_hw_kick(bool level) { leaf_gw_kick(level); }
+void sup_hw_kick_release(void) { leaf_gw_kick_release(); }
+static bool ign_ok(void) { return leaf_gw_check_ignition(); }
+#else
+/* Ocelot: external relay on PB12 (CONFIRM for your wiring: H4/H5 GPIO or an
+ * IGN_OUT-gated FET). No external watchdog, no ignition sense (PA1 is IGN_OUT
+ * there, an output). */
+void sup_hw_relay(bool on) { set_gpio_output(GPIOB, 12, on); }
+void sup_hw_kick(bool level) { UNUSED(level); }
+void sup_hw_kick_release(void) { }
+static bool ign_ok(void) { return true; }
+#endif
+
+/* Copy a received frame (id, IDE/RTR, DLC, data) into a TX mailbox. */
+static void rx_to_tx(const CAN_FIFOMailBox_TypeDef *mb, CAN_FIFOMailBox_TypeDef *m) {
+  m->RIR = (mb->RIR & 0xFFFFFFFEU) | 1U;   /* same id/IDE/RTR, TXRQ */
+  m->RDTR = mb->RDTR & 0xFU;              /* DLC */
+  m->RDLR = mb->RDLR;
+  m->RDHR = mb->RDHR;
 }
 
 /* Build a standard-id TX mailbox from id + 8 bytes and send it on a bus. */
@@ -109,15 +162,26 @@ static void copy_bytes(const CAN_FIFOMailBox_TypeDef *mb, uint8_t out[8]) {
   for (int i = 0; i < 8; i++) out[i] = GET_BYTE(mb, i);
 }
 
-/* ADAS side (CAN1): run the gateway, emit toward the chassis (CAN2, bus 1). */
+/* ADAS side (CAN1): run the gateway, emit toward the chassis (CAN2, bus 1).
+ * Frames are always drained and counted (liveness), forwarded only while the
+ * supervisor has the relay engaged. */
 void CAN1_RX0_IRQ_Handler(void) {
   while ((CAN1->RF0R & CAN_RF0R_FMP0) != 0) {
     CAN_FIFOMailBox_TypeDef *mb = &CAN1->sFIFOMailBox[0];
-    uint32_t addr = GET_ADDR(mb);
-    uint8_t in[8], out[8];
-    copy_bytes(mb, in);
-    gw_on_adas_frame(&S, now_ms(), addr, in, out);  /* FORWARD or SUBSTITUTE */
-    send_std(addr, out, 1);
+    adas_rx_cnt++;
+    if (fwd_on) {
+      CAN_FIFOMailBox_TypeDef m;
+      rx_to_tx(mb, &m);
+      if (((mb->RIR & 4U) == 0U) && (GET_LEN(mb) == 8U)) {   /* std, 8 bytes: may substitute */
+        uint8_t in[8], out[8];
+        copy_bytes(mb, in);
+        if (gw_on_adas_frame(&S, now_ms(), GET_ADDR(mb), in, out) == GW_SUBSTITUTE) {
+          m.RDLR = out[0] | (out[1] << 8) | (out[2] << 16) | ((uint32_t)out[3] << 24);
+          m.RDHR = out[4] | (out[5] << 8) | (out[6] << 16) | ((uint32_t)out[7] << 24);
+        }
+      }
+      can_send(&m, 1, false);
+    }
     CAN1->RF0R |= CAN_RF0R_RFOM0;
   }
 }
@@ -125,10 +189,12 @@ void CAN1_RX0_IRQ_Handler(void) {
 /* Chassis side (CAN2): pass straight back to ADAS (CAN1, bus 0). */
 void CAN2_RX0_IRQ_Handler(void) {
   while ((CAN2->RF0R & CAN_RF0R_FMP0) != 0) {
-    CAN_FIFOMailBox_TypeDef *mb = &CAN2->sFIFOMailBox[0];
-    uint8_t d[8];
-    copy_bytes(mb, d);
-    send_std(GET_ADDR(mb), d, 0);
+    car_rx_cnt++;
+    if (fwd_on) {
+      CAN_FIFOMailBox_TypeDef m;
+      rx_to_tx(&CAN2->sFIFOMailBox[0], &m);
+      can_send(&m, 0, false);
+    }
     CAN2->RF0R |= CAN_RF0R_RFOM0;
   }
 }
@@ -161,9 +227,15 @@ void CAN3_RX0_IRQ_Handler(void) {
 void CAN1_TX_IRQ_Handler(void) { process_can(0); }
 void CAN2_TX_IRQ_Handler(void) { process_can(1); }
 void CAN3_TX_IRQ_Handler(void) { process_can(2); }
-void CAN1_SCE_IRQ_Handler(void) { can_sce(CAN1); }
-void CAN2_SCE_IRQ_Handler(void) { can_sce(CAN2); }
-void CAN3_SCE_IRQ_Handler(void) { can_sce(CAN3); }
+/* Bus-off is latched here: ABOM recovers the controller on its own after
+ * 128 x 11 recessive bits, which a main-loop poll of ESR could miss. */
+static void sce(CAN_TypeDef *c) {
+  if ((c->ESR & CAN_ESR_BOFF) != 0U) { bus_off_seen = true; }
+  can_sce(c);
+}
+void CAN1_SCE_IRQ_Handler(void) { sce(CAN1); }
+void CAN2_SCE_IRQ_Handler(void) { sce(CAN2); }
+void CAN3_SCE_IRQ_Handler(void) { sce(CAN3); }
 
 void __initialize_hardware_early(void) { early(); }
 
@@ -181,13 +253,21 @@ int main(void) {
   REGISTER_INTERRUPT(CAN3_RX0_IRQn, CAN3_RX0_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
   REGISTER_INTERRUPT(CAN3_SCE_IRQn, CAN3_SCE_IRQ_Handler, CAN_INTERRUPT_RATE, FAULT_INTERRUPT_RATE_CAN_3)
 
+#ifdef LEAF_GW_BOARD
+  leaf_gw_clock_init();
+#else
   clock_init();
+#endif
   peripherals_init();
   detect_configuration();
   detect_board_type();
+#ifdef LEAF_GW_BOARD
+  current_board = &board_leaf_gw;
+#endif
 
-  /* 1 MHz free-running microsecond counter (48 MHz / 48). */
-  TIM2->PSC = 48U - 1U;
+  /* 1 kHz free-running millisecond counter (48 MHz APB1 timer clock / 48000),
+   * so now_ms() wraps at 2^32 ms like the unsigned differences expect. */
+  TIM2->PSC = 48000U - 1U;
   TIM2->CR1 = TIM_CR1_CEN;
   TIM2->EGR = TIM_EGR_UG;
 
@@ -200,12 +280,13 @@ int main(void) {
   llcan_init(CAN1);
   llcan_init(CAN2);
   llcan_init(CAN3);
-
-  set_gpio_mode(RELAY_PORT, RELAY_PIN, MODE_OUTPUT);
-  set_gpio_output_type(RELAY_PORT, RELAY_PIN, OUTPUT_TYPE_PUSH_PULL);
+  /* bus-off interrupts, latched in sce() (llcan_init enables TX/RX only) */
+  register_set_bits(&(CAN1->IER), CAN_IER_ERRIE | CAN_IER_BOFIE);
+  register_set_bits(&(CAN2->IER), CAN_IER_ERRIE | CAN_IER_BOFIE);
+  register_set_bits(&(CAN3->IER), CAN_IER_ERRIE | CAN_IER_BOFIE);
 
   gw_init(&S, OP_TIMEOUT_MS);
-  relay_engage(true);   /* MCU now bridges Chassis CAN; reset de-energizes -> stock */
+  sup_init(&SUP, now_ms());   /* transceivers up; relay stays off (stock) */
 
   watchdog_init();
   enable_interrupts();
@@ -213,13 +294,35 @@ int main(void) {
   uint32_t hb_last = now_ms();
   uint8_t hb_counter = 0;
   while (1) {
-    watchdog_feed();    /* a stalled loop -> IWDG reset -> relay opens -> stock */
+    /* a stalled loop -> IWDG reset (and, once engaged, no WDI kick -> TPS3828
+     * reset); either pulls NRST, which drops the relay -> stock */
+    watchdog_feed();
     uint32_t now = now_ms();
-    if ((uint32_t)(now - hb_last) >= LEAF_HB_PERIOD_MS) {
-      /* heartbeat on the V-CAN tap: openpilot only offers / keeps longitudinal while it hears us */
+
+    /* The external watchdog is kicked only inside sup_step, here: not from an
+     * ISR, which could keep running while this loop or forwarding is dead. */
+    sup_in in;
+    ENTER_CRITICAL();
+    in.bus_off = bus_off_seen ||
+                 ((CAN1->ESR & CAN_ESR_BOFF) != 0U) ||
+                 ((CAN2->ESR & CAN_ESR_BOFF) != 0U) ||
+                 ((CAN3->ESR & CAN_ESR_BOFF) != 0U);
+    bus_off_seen = false;
+    in.adas_rx = adas_rx_cnt;
+    in.car_rx = car_rx_cnt;
+    in.fwd_errs = can_fwd_errs;
+    EXIT_CRITICAL();
+    in.ign = ign_ok();
+    sup_step(&SUP, now, &in);
+
+    if (sup_heartbeat(&SUP) && ((uint32_t)(now - hb_last) >= LEAF_HB_PERIOD_MS)) {
+      /* heartbeat on the V-CAN tap: openpilot only offers / keeps longitudinal
+       * while it hears us; silent once faulted, so its rx check drops controls */
       uint8_t hb[8];
-      uint8_t status = LEAF_HB_INLINE;
-      if (leaf_mode(now, S.last_op_ms, S.engaged, S.timeout_ms) == LEAF_ACTIVE) status |= LEAF_HB_OP_ACTIVE;
+      uint8_t status = sup_inline(&SUP) ? LEAF_HB_INLINE : 0U;
+      if (sup_inline(&SUP) && (leaf_mode(now, S.last_op_ms, S.engaged, S.timeout_ms) == LEAF_ACTIVE)) {
+        status |= LEAF_HB_OP_ACTIVE;
+      }
       leaf_hb_encode(hb, status, hb_counter++);
       send_std(LEAF_ID_HEARTBEAT, hb, 2);
       hb_last = now;

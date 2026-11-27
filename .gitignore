@@ -4,3 +4,4 @@ result
 __pycache__/
 *.pyc
 hardware/board/layout/.work/
+test_gw_supervisor
