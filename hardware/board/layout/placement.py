@@ -63,7 +63,7 @@ P = {
     "C19": (21.8, 3.1, 90),      # VCC
     "C20": (21.8, 5.1, 90),      # VIO
     "JP6": (23.6, 1.45, 270),     # hangs off the L line
-    "R10": (23.85, 4.1, 0),
+    "R10": (23.85, 4.1, 180),    # pin 2 (L) under JP6, pin 1 (MID) toward R9/C21
     "C21": (26.2, 5.8, 90),
     "JP5": (23.6, 6.75, 90),     # stands on the H line
     "R9": (26.2, 2.6, 90),
@@ -74,7 +74,7 @@ P = {
     "C13": (21.8, 12.2, 90),
     "C14": (22.3, 14.0, 0),
     "JP2": (11.0, 9.8, 90),      # stands on the L line
-    "R6": (13.85, 9.15, 0),
+    "R6": (13.85, 9.15, 180),    # pin 2 (L) next to JP2, pin 1 (MID) next to C15
     "C15": (16.9, 9.15, 0),
     "JP1": (11.0, 17.4, 270),    # hangs off the H line
     "R5": (13.85, 18.05, 0),
@@ -87,7 +87,7 @@ P = {
     "C16": (46.4, 15.6, 90),
     "C17": (46.6, 17.6, 0),
     "JP4": (35.8, 13.2, 90),
-    "R8": (38.65, 12.55, 0),
+    "R8": (38.65, 12.55, 180),   # pin 2 (L) next to JP4
     "JP3": (35.8, 20.8, 270),
     "R7": (38.65, 21.45, 0),
     "C18": (41.7, 21.45, 0),
@@ -179,7 +179,7 @@ LOGO = (37.95, 22.5)          # top-left corner of the ~12 mm logo (logo.py)
 SILK_TEXT = {
     "\u00a9 2026 Stephen Bouche \u00b7 MIT": (21.9, 23.5, 1.0, 0.65, 0, "left"),
     "leaf-gw rev {rev}": (49.1, 21.9, 1.0, 0.8, 90, "left"),
-    "bench / test car only": (0.6, 7.35, 1.0, 0.8, 0, "left"),
+    "bench / test car only": (1.2, 7.35, 1.0, 0.8, 0, "left"),
 }
 # Back side (no parts there): what each header pin carries, which header goes
 # where, and the warning again, large. Bottom text reads mirrored from the top.
@@ -194,6 +194,31 @@ for _col in range(9):
     BACK_ROWS[f"{_odd} {PIN_NAMES[_odd]} / {_even} {PIN_NAMES[_even]}"] = (9.6, _y, 1.0, 0.6, 0, "right")
     _right = {9: "n/c", 11: "n/c"}
     BACK_ROWS[f"{_odd} {_right.get(_odd, PIN_NAMES[_odd])} / {_even} {PIN_NAMES[_even]} "] = (49.4, _y, 1.0, 0.6, 0, "left")
+# Drawn as knockout text (a filled silkscreen box with the letters left bare),
+# so the warning and the two header names stand out.
+KNOCKOUT = {"bench / test car only", "CAR HARNESS", "TO BOX (9/11 open)", "BENCH / TEST CAR ONLY"}
+# The ESD paw mark (logo.esd_paw) on the back, board mm of its top-left corner
+# as seen from the top (it is mirrored onto the back).
+ESD_PAW = (57.0, 36.5)
+# QR code to the repository (logo.qr) on the back, board mm of its top-left
+# corner as seen from the top; the URL is written under it.
+QR = (30.1, 13.0)
+# Functional labels, placed by build.labels() next to their part:
+# (text, part, side, text height mm).
+LABELS = [   # the most crowded first: each label placed blocks spots for the next
+    ("PWR", "D11", "top", 1.0),
+    ("V-CAN TERM", "JP5", "top", 1.0),   # JP6, the same port right above it, is boxed in
+    ("ADAS TERM", "JP1", "top", 1.0), ("ADAS TERM", "JP2", "top", 1.0),
+    ("CAR TERM", "JP3", "top", 1.0), ("CAR TERM", "JP4", "top", 1.0),
+    ("DIO", "TP1", "top", 1.0), ("CLK", "TP2", "top", 1.0), ("RST", "TP3", "top", 1.0),
+    # SWD's lower row is boxed in (TP1/TP2 above, R1/R17/R18 around, the edge):
+    # named on a line above the upper row's labels instead
+    ("SWD  lower: 3V3 GND", "TP1", "top", 1.0),
+    ("BOOT0", "TP6", "top", 1.0), ("DFU", "SW1", "top", 1.0),
+    ("STAT", "D1", "top", 1.0),
+    ("USB (bench)", "J3", "top", 1.0),
+    ("CAR HARNESS", "J1", "top", 1.0), ("TO BOX", "J2", "top", 1.0),
+]
 BACK_TEXT = {
     "CAR HARNESS": (7.6, 2.5, 1.2, 1.0, 0, "right"),
     "TO BOX (9/11 open)": (51.4, 2.5, 1.2, 1.0, 0, "left"),

@@ -34,7 +34,7 @@
       # `kicad-python` is that interpreter with pcbnew on its path.
       layoutTools = pkgs:
         let
-          py = pkgs.python3.withPackages (ps: [ ps.shapely ]);
+          py = pkgs.python3.withPackages (ps: [ ps.shapely ps.segno ]);
           kicadPython = pkgs.writeShellScriptBin "kicad-python" ''
             export PYTHONPATH=${pkgs.kicad-small.src}/lib/${pkgs.python3.libPrefix}/site-packages''${PYTHONPATH:+:$PYTHONPATH}
             export JLCTOOLS=''${JLCTOOLS:-${jlctools}}
@@ -166,7 +166,10 @@
         };
 
         # Board design (hardware/board): `./hardware/board/check.sh`.
-        hardware = pkgs.mkShell ({ packages = [ (boardPython pkgs) ] ++ layoutTools pkgs; } // boardEnv pkgs);
+        # The 3D models (~450 MB) only feed layout/render.sh, so the checks don't pull them.
+        hardware = pkgs.mkShell ({ packages = [ (boardPython pkgs) ] ++ layoutTools pkgs; } // boardEnv pkgs // {
+          KICAD10_3DMODEL_DIR = "${pkgs.kicad-small.libraries.packages3d}/share/kicad/3dmodels";
+        });
 
         # Run the opendbc car-port and panda-safety patches' test suites.
         # opendbc needs Python < 3.13 (pycapnp); libsafety builds with cc + cffi.

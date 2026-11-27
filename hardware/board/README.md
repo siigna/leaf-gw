@@ -412,8 +412,22 @@ part of the safety design, so state it on the drawing.
   edge), not two. With two, there were too few via spots for freerouting.
   The tighter margin still keeps every void and antipad out from under the
   pairs.
-- **VIN12_10/12 run on the outer layers** now (pre-routed or freerouted at
-  0.5 mm or more; `routes.VIN12_ON_IN2` is off). In2 carries no long copper:
+- **Routing is retried until valid.** freerouting gives a few different
+  tracks on every run from the same input, and some runs leave a connection
+  open. `build.py` validates each routed board (DRC plus every layout check)
+  and routes again from the placed board, up to `ROUTE_ATTEMPTS` times, so a
+  fresh build either produces a valid board or fails loudly. The board files
+  still differ byte for byte between builds; `check_layout.sh --rebuild`
+  checks that validity reproduces.
+- **The non-CAN pass-throughs are scripted** (`routes.passthrough`). J1 and J2
+  sit in the same orientation, so each even pin is on J1's board-side row and
+  on J2's edge-side row, and a 0.5 mm track can't pass between J2's 1.5 mm
+  pads on 2 mm pitch. Left to the routers, the 12 V and IGN tracks went around
+  J2's ends, crossed each other and failed differently on every build. Now the
+  bus loops, IGN and 12 V run on B.Cu in pin order (no crossings), VIN12_10/12
+  enter J2 on a ~3.6 mm In2 hop between its holes (J2's other pads have no
+  inner rings), and IGN, which carries the comma's supply, reaches J2.14/J2.2
+  on an outer-layer lane along the board edge. In2 carries nothing else:
   `check_in2` limits any In2 copper to 5 mm per net and requires the +3V3
   fill to stay one region with no neck under 1.0 mm. A 1.0 mm neck of 15.2 µm inner copper carries 0.65 A at 10 °C
   rise by IPC-2221's internal-conductor formula, a conservative bound next to

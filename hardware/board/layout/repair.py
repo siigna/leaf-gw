@@ -146,13 +146,12 @@ class Grid:
 
 
 MAX_EXPAND = 4_000_000
-MAX_SECONDS = 240.0  # wall time per search
 MARGIN = 8.0         # mm: a search stays inside the start/goal box grown by this
 PREROUTE_MARGIN = 14.0  # mm: pre-routes may go around a header's end (J2.10/12 face the edge)
 IN2_COST = 4.0       # an In2 (power plane) step costs this many outer-layer steps
 
 
-def astar(free, via_ok, starts, goals, layers=2, max_expand=None, max_seconds=None, margin=MARGIN):
+def astar(free, via_ok, starts, goals, layers=2, max_expand=None, margin=MARGIN):
     """starts/goals: {(layer_index, i, j)}; layer indices into LAYERS3 (F, B, In2),
     the first `layers` of them usable. Returns the cell path, or None when the
     goal is unreachable or the expansion / wall-time cap is hit."""
@@ -188,7 +187,8 @@ def astar(free, via_ok, starts, goals, layers=2, max_expand=None, max_seconds=No
         if d > best.get((n, md), 1e18) + 1e-9:
             continue
         expanded += 1
-        if expanded > (max_expand or MAX_EXPAND) or (expanded % 4096 == 0 and time.monotonic() - t0 > (max_seconds or MAX_SECONDS)):
+        # expansions, not wall time: a time cap made the result depend on the machine
+        if expanded > (max_expand or MAX_EXPAND):
             print(f"  astar: cap hit after {expanded} expansions, {time.monotonic() - t0:.0f} s")
             return None
         L, i, j = n
@@ -306,7 +306,7 @@ def preroute(b, jobs, add_track, add_via):
         goals = set().union(*[pad_cells(shape, it, k) for it in near(pb) for k in (0, 1)])
         for L, i, j in starts | goals:
             free[LAYERS3[L]][i, j] = True
-        path = astar(free, via_ok, starts, goals, max_expand=8_000_000, max_seconds=900.0,
+        path = astar(free, via_ok, starts, goals, max_expand=8_000_000,
                      margin=PREROUTE_MARGIN)   # board still open: long, wide searches are fine
         if path is None:
             failed.append(net)

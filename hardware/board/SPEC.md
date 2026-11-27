@@ -144,6 +144,10 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
   USB pairs.
 - CAN pairs as 120 Ω differential pairs; USB D+/D− as 90 Ω.
 - 12 V input traces at least 0.5 mm; relay and power pins with thermal relief.
+- Pass-throughs scripted, not autorouted: every non-CAN pass-through runs on
+  B.Cu in pin order, so none crosses another; the 12 V pins reach J2 on a short
+  In2 hop between J2's holes (its other pads have no inner rings), and IGN
+  reaches J2 on an F.Cu lane in the board-edge strip (`routes.passthrough`).
 - Size target: 75 × 50 mm at most (about 70 × 45 aimed for), both 18-pin
   connectors on the short edges, USB-C on a long edge. The first target,
   under 60 × 40 mm, was too dense to route: freerouting and the grid repair
@@ -163,6 +167,23 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
   `© 2026 Stephen Bouche · MIT`.
 - The board first carried the ESCargot snail; the leaf replaced it as a better
   fit for a Leaf project.
+- Knockout text (a filled silkscreen box with the letters left bare) for the
+  bench warning on both sides and the two header names on the back.
+- On the back, an ESD mark: a warning triangle with a paw cut out of it, drawn
+  in code (`logo.esd_paw`, our own art, so MIT like the rest), about 8 mm wide.
+- On the back, a QR code to <https://github.com/siigna/leaf-gw> (`logo.qr`;
+  the URL in upper case so it fits version 2, 25 × 25 modules of 0.45 mm), dark
+  modules left bare, so it reads dark-on-light on a dark mask. A white or
+  yellow mask with black silkscreen needs the other polarity
+  (`logo.QR_DARK_SILK = True`): zbar could not read the inverted code in the
+  white-mask render.
+- Functional labels next to their parts (`placement.LABELS`, placed by
+  `build.labels` clear of pads, courtyards and other silkscreen): the
+  termination jumpers by bus, SWD pads, BOOT0 pad and DFU button, status and
+  power LEDs, USB, and which header is which. SWD's lower row is boxed in by
+  parts, so it is named on a line above the upper row's labels.
+- Mask colour is still open: `render.sh` renders both sides in every JLCPCB
+  mask colour into `out/render/colors/`.
 
 ## Automated checks (the reviewer stand-in)
 

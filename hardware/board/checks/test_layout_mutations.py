@@ -164,6 +164,31 @@ class Mutations(unittest.TestCase):
             z.SetFilledPolysList(K.In1_Cu, K.SHAPE_POLY_SET())
         self.bites(L.check_reference_plane, m, "leaves the In1 GND plane")
 
+    # In2 (+3V3 plane)
+    def _in2_cut(self, bd, bridge):
+        """Slot the In2 +3V3 fill across the whole board at x = 37.5, leaving a
+        bridge of this width (mm) at mid-height (0: a clean split)."""
+        z = next(z for z in bd.pcb.Zones() if z.GetNetname() == "+3V3" and z.IsOnLayer(K.In2_Cu))
+        fill = z.GetFilledPolysList(K.In2_Cu)
+        x0, x1, h = 37.25, 37.75, L.B.H
+        for y0, y1 in ((-1, h / 2 - bridge / 2), (h / 2 + bridge / 2, h + 1)):
+            cut = K.SHAPE_POLY_SET()
+            cut.NewOutline()
+            for px, py in ((x0, y0), (x1, y0), (x1, y1), (x0, y1)):
+                cut.Append(pt(px, py).x, pt(px, py).y)
+            fill.BooleanSubtract(cut)
+        z.SetFilledPolysList(K.In2_Cu, fill)
+
+    def test_in2_split(self):
+        self.bites(L.check_in2, lambda bd: self._in2_cut(bd, 0), "+3V3 plane on In2")
+
+    def test_in2_neck(self):
+        self.bites(L.check_in2, lambda bd: self._in2_cut(bd, 0.6), "neck under 1.0 mm")
+
+    def test_in2_long_track(self):
+        self.bites(L.check_in2, lambda bd: add_track(bd, "SWDIO", pt(30, 40), pt(40, 40), 0.2, K.In2_Cu),
+                   "SWDIO runs 10.0 mm on In2")
+
     # 12 V
     def test_12v_track_narrow(self):
         self.bites(L.check_12v_width, lambda bd: longest(bd, "IGN").SetWidth(mm(0.3)), "IGN: 0.300")
@@ -201,6 +226,13 @@ class Mutations(unittest.TestCase):
         def m(bd):
             p = bd.pad("J2", "9").GetPosition()
             add_track(bd, "", p, K.VECTOR2I(p.x - mm(1.2), p.y), 0.2, K.B_Cu)
+        self.bites(L.check_copper_safety, m, "J2.9 touched")
+
+    def test_box_pin_9_barrel_on_in2(self):
+        # J2's pads have no In2 ring: a track reaching the plated barrel there still connects
+        def m(bd):
+            p = bd.pad("J2", "9").GetPosition()
+            add_track(bd, "", p, K.VECTOR2I(p.x - mm(1.2), p.y), 0.2, K.In2_Cu)
         self.bites(L.check_copper_safety, m, "J2.9 touched")
 
     def test_pass_through_cut(self):

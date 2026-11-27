@@ -285,9 +285,26 @@ def critical(b, fps, nets):
     for net, w, a, c in split_at_junctions(segs):
         add_track(b, nets, net, w, a, c)
     pad = pad_lookup(fps)
-    for net, w, pts in routes.in2_lines(pad):
+    layer = {"F": K.F_Cu, "B": K.B_Cu, "In2": K.In2_Cu}
+    tracks, pt_vias = routes.passthrough(pad)
+    def net_of(ref, num):
+        return next(p.GetNetname() for p in fps[ref].Pads() if p.GetNumber() == num)
+    for net, w, lay, pts in tracks + routes.local_links(pad, net_of):
         for a, c in zip(pts, pts[1:]):
-            add_track(b, nets, net, w, a, c, K.In2_Cu)
+            add_track(b, nets, net, w, a, c, layer[lay])
+    for net, pos in pt_vias:
+        v = K.PCB_VIA(b)
+        v.SetPosition(pt(*pos))
+        v.SetWidth(mm(B.JLC["via_diameter"]))
+        v.SetDrill(mm(B.JLC["via_drill"]))
+        v.SetNet(nets[net])
+        v.SetLocked(True)
+        b.Add(v)
+    ref, nums = routes.PT_IN2_CLEAR
+    for p in fps[ref].Pads():
+        if p.GetNumber() in nums:
+            p.SetRemoveUnconnected(True)    # no inner rings: the In2 hops pass between the holes
+            p.SetKeepTopBottom(True)
     for net, pos in routes.vias(pad):
         v = K.PCB_VIA(b)
         v.SetPosition(pt(*pos))
@@ -402,21 +419,24 @@ def dsn_prepare(text):
         for lay in ("F.Cu", "B.Cu"):
             keep.append(f'    (via_keepout "" (polygon {lay} 0 {ring}))\n')
     text = text.replace("    (via ", "".join(keep) + "    (via ", 1)
-    # vias freerouting adds use a padstack 0.05 mm wider than the real one, so
+    # vias freerouting adds use a padstack 0.1 mm wider than the real one, so
     # its via-to-via clearance (0.15) also keeps JLC's 0.5 mm hole-to-hole;
     # autoroute() shrinks them back after the import
     via = re.search(r'\(via "(Via\[0-3\]_600:300_um)"\)', text)
     if not via:
         raise SystemExit("DSN: no routing via padstack")
     stack = re.search(r'    \(padstack "' + re.escape(via.group(1)) + r'"\n(?:      .*\n)*?    \)\n', text).group(0)
-    d = int(round((B.JLC["via_drill"] + B.JLC["hole_to_hole"] - B.NET_CLASSES["Default"][1]) * 1000))
+    # sized so its clearance also holds against our fixed, normal-size vias:
+    # centres >= d/2 + via_diameter/2 + clearance = drill + hole_to_hole
+    d = int(round((2 * (B.JLC["via_drill"] + B.JLC["hole_to_hole"] - B.NET_CLASSES["Default"][1])
+                   - B.JLC["via_diameter"]) * 1000))
     wide = stack.replace(via.group(1), ROUTE_VIA).replace(f"{int(B.JLC['via_diameter'] * 1000)})", f"{d})")
     text = text.replace(stack, stack + wide, 1).replace(via.group(0), f'(via "{ROUTE_VIA}")', 1)
     text = text.replace(f'(use_via "{via.group(1)}")', f'(use_via "{ROUTE_VIA}")')
     return text
 
 
-ROUTE_VIA = "Via_route_650:300_um"
+ROUTE_VIA = "Via_route_700:300_um"
 
 
 def autoroute(b, work, passes):
@@ -472,8 +492,9 @@ def logo_footprint(b, x, y):
     b.Add(fp)
 
 
-def silk_text(b, text, x, y, size=1.0, width=None, layer=K.F_SilkS, rot=0, just="left"):
+def silk_text(b, text, x, y, size=1.0, width=None, layer=K.F_SilkS, rot=0, just="left", knockout=False):
     t = K.PCB_TEXT(b)
+    t.SetIsKnockout(knockout)
     t.SetText(text)
     t.SetLayer(layer)
     t.SetTextSize(K.VECTOR2I(mm(width or size), mm(size)))
@@ -486,6 +507,7 @@ def silk_text(b, text, x, y, size=1.0, width=None, layer=K.F_SilkS, rot=0, just=
     if layer == K.B_SilkS:
         t.SetMirrored(True)
     b.Add(t)
+    return t
 
 
 def silkscreen(b):
@@ -494,9 +516,105 @@ def silkscreen(b):
     lx, ly = placement.LOGO
     logo_footprint(b, lx, ly)
     for text, (x, y, size, width, rot, just) in placement.SILK_TEXT.items():
-        silk_text(b, text.replace("{rev}", B.REVISION), x, y, size, width, K.F_SilkS, rot, just)
+        silk_text(b, text.replace("{rev}", B.REVISION), x, y, size, width, K.F_SilkS, rot, just,
+                  text in placement.KNOCKOUT)
     for text, (x, y, size, width, rot, just) in placement.BACK_TEXT.items():
-        silk_text(b, text.replace("{rev}", B.REVISION), x, y, size, width, K.B_SilkS, rot, just)
+        silk_text(b, text.replace("{rev}", B.REVISION), x, y, size, width, K.B_SilkS, rot, just,
+                  text in placement.KNOCKOUT)
+    silk_shape(b, logo.esd_paw(), *placement.ESD_PAW, K.B_SilkS)
+    qx, qy = placement.QR
+    code = logo.qr()
+    silk_shape(b, code, qx, qy, K.B_SilkS)
+    silk_text(b, "github.com/siigna/leaf-gw", qx + code.bounds[2] / 2, qy + code.bounds[3] + 1.0,
+              1.0, 0.7, K.B_SilkS, 0, "center")
+    labels(b)
+
+
+def silk_shape(b, shape, x, y, layer):
+    """A shapely shape (mm, origin top-left) as filled silkscreen polygons at
+    board (x, y); on the back it is mirrored so it reads from that side."""
+    w = shape.bounds[2]
+    for poly in getattr(shape, "geoms", [shape]):
+        s = K.PCB_SHAPE(b, K.SHAPE_T_POLY)
+        s.SetLayer(layer)
+        s.SetFilled(True)
+        s.SetWidth(0)
+        chain = K.SHAPE_LINE_CHAIN()
+        for px, py in logo.keyholed(poly):
+            px = w - px if layer == K.B_SilkS else px
+            chain.Append(mm(B.ORIGIN[0] + x + px), mm(B.ORIGIN[1] + y + py))
+        chain.SetClosed(True)
+        ps = K.SHAPE_POLY_SET()
+        ps.AddOutline(chain)
+        s.SetPolyShape(ps)
+        b.Add(s)
+
+
+LABEL_GAP = 0.5     # mm, label to its part's courtyard (glyphs overshoot their nominal height)
+LABEL_CLEAR = 0.25  # mm, label to any other silkscreen or courtyard
+LABEL_RINGS = 3     # how far out a label may move from its part (1 mm a ring)
+
+
+def labels(b):
+    """placement.LABELS: each label goes to the first spot around its part's
+    courtyard (above or below, centred then flush with its left edge; right,
+    left; then turned 90 degrees on the sides; nearest ring first) that is clear of pad openings, courtyards, other silkscreen and the board
+    edge. Deterministic; a label with no room stops the build."""
+    from shapely.geometry import box
+    from shapely.ops import unary_union
+    fps = {fp.GetReference(): fp for fp in b.GetFootprints()}
+    gap = B.JLC["silk_to_pad"] + 0.05
+    inside = box(0, 0, B.W, B.H).buffer(-0.4)
+    avoid = {}
+    for layer, mask_layer, crt in ((K.F_SilkS, K.F_Mask, K.F_CrtYd), (K.B_SilkS, K.B_Mask, K.B_CrtYd)):
+        g = [poly_of(p, mask_layer, gap) for fp in fps.values() for p in fp.Pads() if p.IsOnLayer(mask_layer)]
+        g += [poly_of(d, layer, LABEL_CLEAR) for d in b.GetDrawings() if d.GetLayer() == layer]
+        for fp in fps.values():
+            g += [poly_of(it, layer, LABEL_CLEAR) for it in fp.GraphicalItems() if it.GetLayer() == layer]
+            c = courtyard(fp, crt)
+            if not c.is_empty:
+                g.append(c.buffer(LABEL_CLEAR))
+        avoid[layer] = unary_union(g)
+    missing = []
+    for text, ref, side, size in placement.LABELS:
+        layer = K.F_SilkS if side == "top" else K.B_SilkS
+        crt = courtyard(fps[ref], K.B_CrtYd if side == "back" else K.F_CrtYd)
+        if crt.is_empty:   # a top part labelled on the back: beside where it sits
+            crt = courtyard(fps[ref], K.F_CrtYd)
+        cx0, cy0, cx1, cy1 = crt.bounds
+        mx, my = (cx0 + cx1) / 2, (cy0 + cy1) / 2
+        spots = []
+        for ring in range(LABEL_RINGS):   # nearest first, then 1 mm further out each ring
+            g0 = LABEL_GAP + ring
+            d = g0 + size / 2
+            spots += [((mx, cy0 - d), 0, "center"), ((mx, cy1 + d), 0, "center"),
+                      ((cx0 + LABEL_CLEAR, cy0 - d), 0, "left"), ((cx0 + LABEL_CLEAR, cy1 + d), 0, "left"),
+                      ((cx1 + g0, my), 0, "left"), ((cx0 - g0, my), 0, "right"),
+                      ((cx1 + d, my), 90, "center"), ((cx0 - d, my), 90, "center")]
+        for (x, y), rot, just in spots:
+            t = silk_text(b, text, x, y, size, 0.7 * size, layer, rot, just)
+            g = poly_of(t, layer)
+            if inside.contains(g) and not g.intersects(avoid[layer]):
+                avoid[layer] = avoid[layer].union(g.buffer(LABEL_CLEAR))
+                break
+            b.Delete(t)
+        else:
+            missing.append(f"{text!r} ({ref}, {side})")
+    if missing:
+        raise SystemExit("silkscreen labels with no clear spot: " + ", ".join(missing))
+
+
+def courtyard(fp, layer):
+    from shapely.geometry import Polygon
+    from shapely.ops import unary_union
+    ps = fp.GetCourtyard(layer)
+    out = []
+    for i in range(ps.OutlineCount()):
+        o = ps.Outline(i)
+        pts = [to_board(o.CPoint(j)) for j in range(o.PointCount())]
+        if len(pts) >= 3:
+            out.append(Polygon(pts).buffer(0))
+    return unary_union(out)
 
 
 PLANE_NETS = ("GND", "+3V3")
@@ -826,6 +944,30 @@ def build_routed(route=True):
     write_project(os.path.join(os.path.dirname(B.PCB), "leaf_gw.kicad_pro"))   # SaveBoard rewrote it
 
 
+ROUTE_ATTEMPTS = 6
+
+
+def validate(path):
+    """What would fail check_layout.sh on this board: DRC (errors, warnings,
+    unconnected items) and the layout checks. [] when valid."""
+    import tempfile
+    assert os.path.exists(os.path.join(os.path.dirname(path), "leaf_gw.kicad_dru")), "DRC needs the rules beside the board"
+    with tempfile.TemporaryDirectory() as tmp:
+        rpt = os.path.join(tmp, "drc.json")
+        subprocess.run(["kicad-cli", "pcb", "drc", "--severity-all", "--format", "json", "-o", rpt, path],
+                       capture_output=True)
+        r = json.load(open(rpt))
+    bad = []
+    v, u = r.get("violations", []), r.get("unconnected_items", [])
+    if v or u:
+        bad.append(f"DRC {len(v)} violations, {len(u)} unconnected")
+    chk = subprocess.run([sys.executable, os.path.join(B.BOARD_DIR, "checks", "layout.py"), path],
+                         capture_output=True, text=True, cwd=os.path.join(B.BOARD_DIR, "checks"))
+    if chk.returncode:
+        bad += [ln.split()[1] for ln in chk.stdout.splitlines() if ln.startswith("FAIL")] or ["layout checks"]
+    return bad
+
+
 def drop_dangling(b):
     """Delete vias and tracks the DRC would call dangling (KiCad's own test: a
     via joined on fewer than two layers, a track with a loose end), repeatedly,
@@ -938,7 +1080,8 @@ def redo_silkscreen():
         if fp.GetReference() == "LOGO":
             b.Delete(fp)
     for d in list(b.GetDrawings()):
-        if d.GetClass() == "PCB_TEXT" and d.GetLayer() in (K.F_SilkS, K.B_SilkS):
+        if d.GetLayer() in (K.F_SilkS, K.B_SilkS) and (d.GetClass() == "PCB_TEXT" or
+                                                        (d.GetClass() == "PCB_SHAPE" and d.GetShape() == K.SHAPE_T_POLY)):
             b.Delete(d)
     silkscreen(b)
     K.SaveBoard(B.PCB, b)
@@ -954,4 +1097,22 @@ if __name__ == "__main__":
     else:
         build_placed()
         args = [sys.executable, os.path.abspath(__file__), "--phase2"] + [a for a in sys.argv[1:] if a == "--no-route"]
-        subprocess.run(args, check=True)
+        if "--no-route" in sys.argv:
+            subprocess.run(args, check=True)
+            sys.exit(0)
+        # freerouting is not deterministic (same input, a few different tracks
+        # each run), so a run can leave a connection open. Route again from the
+        # placed board until the result is valid; the number of tries is fixed.
+        import shutil
+        placed = B.PCB + ".placed"
+        shutil.copy(B.PCB, placed)
+        for attempt in range(1, ROUTE_ATTEMPTS + 1):
+            shutil.copy(placed, B.PCB)
+            subprocess.run(args, check=True)
+            bad = validate(B.PCB)
+            print(f"route attempt {attempt}: {'valid' if not bad else '; '.join(bad)}")
+            if not bad:
+                os.remove(placed)
+                break
+        else:
+            raise SystemExit(f"no valid board after {ROUTE_ATTEMPTS} routing attempts")

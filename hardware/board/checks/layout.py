@@ -60,6 +60,15 @@ def item_shape(item, layer, clearance=0):
     return polyset_to_shapely(ps)
 
 
+def pad_copper(p, layer):
+    """A pad's copper on one layer: its flashed shape, or only the plated barrel
+    where the pad has no ring on that layer (unconnected inner rings removed)."""
+    if p.FlashLayer(layer):
+        return item_shape(p, layer)
+    from shapely.geometry import Point
+    return Point(*xy(p.GetPosition())).buffer(mm(p.GetDrillSize().x) / 2, quad_segs=16)
+
+
 class Board:
     """A pcbnew board plus the netlist it must match; shapes are cached."""
 
@@ -390,7 +399,7 @@ def copper_islands(bd):
                 if p.IsOnLayer(layer) and p.IsOnCopperLayer():
                     if p.GetAttribute() == K.PAD_ATTRIB_NPTH:
                         continue
-                    g = item_shape(p, layer)
+                    g = pad_copper(p, layer)
                     if not g.is_empty:
                         items.append((k, layer, g))
     for i, t in enumerate(bd.pcb.GetTracks()):
@@ -472,7 +481,7 @@ def check_copper_safety(bd):
     # J2.9/J2.11: no track or zone may touch them
     for num in ("9", "11"):
         pd = bd.pad("J2", num)
-        g = {lay: item_shape(pd, lay) for lay in (K.F_Cu, K.B_Cu, K.In1_Cu, K.In2_Cu)}
+        g = {lay: pad_copper(pd, lay) for lay in (K.F_Cu, K.B_Cu, K.In1_Cu, K.In2_Cu)}
         for t in bd.pcb.GetTracks():
             for lay, pg in g.items():
                 if t.IsOnLayer(lay) and item_shape(t, lay).intersects(pg):
@@ -599,6 +608,11 @@ def ipc2221_internal_amps(width_mm, rise_c=10.0, cu_mm=None):
     return 0.024 * rise_c ** 0.44 * a ** 0.725
 
 
+# a +3V3 via's plane connection: via radius, thermal gap and spoke, then the
+# erosion itself (IN2_NECK_MIN / 2): its region must start within this
+IN2_REACH = 0.3 + 0.25 + 0.3 + 0.5
+
+
 def check_in2(bd):
     """In2 is the +3V3 plane: only the VIN12 pass-throughs and short repair hops
     (<= IN2_HOP_MAX per net) may run on it, and its +3V3 fill stays one region
@@ -616,10 +630,27 @@ def check_in2(bd):
     parts = [p for p in getattr(fill, "geoms", [fill]) if p.area > 1.0]
     if len(parts) != 1:
         f.append(f"+3V3 plane on In2 is {len(parts)} regions")
+    # Erode by half the neck: what stays joined is joined by IN2_NECK_MIN or more.
+    # Only regions that serve a +3V3 connection count: a dead-end pocket the
+    # vias cut off (nothing draws current through its neck) is harmless.
     eroded = fill.buffer(-B.IN2_NECK_MIN / 2 * 0.999)
-    big = [p for p in getattr(eroded, "geoms", [eroded]) if p.area > 1.0]
-    if len(big) != 1:
-        f.append(f"+3V3 plane on In2 has a neck under {B.IN2_NECK_MIN} mm ({len(big)} regions after eroding)")
+    regions = [p for p in getattr(eroded, "geoms", [eroded]) if not p.is_empty]
+    conns = [xy(v.GetPosition()) for v in bd.vias() if v.GetNetname() == "+3V3"]
+    conns += [xy(p.GetPosition()) for fp in bd.fps.values() for p in fp.Pads()
+              if p.GetNetname() == "+3V3" and p.IsOnLayer(K.In2_Cu) and p.FlashLayer(K.In2_Cu)]
+    served, choked = set(), []
+    for c in conns:
+        pc = Point(c)
+        d, i = min(((r.distance(pc), i) for i, r in enumerate(regions)), default=(1e9, -1))
+        if d > IN2_REACH:
+            choked.append(c)
+        else:
+            served.add(i)
+    if len(served) > 1:
+        f.append(f"+3V3 plane on In2 has a neck under {B.IN2_NECK_MIN} mm between its connections "
+                 f"({len(served)} regions after eroding)")
+    for c in choked[:3]:
+        f.append(f"+3V3 plane on In2: the connection at ({c[0]:.2f}, {c[1]:.2f}) sits behind a neck under {B.IN2_NECK_MIN} mm")
     amps = ipc2221_internal_amps(B.IN2_NECK_MIN)
     if amps < 2 * B.V3V3_LOAD:
         f.append(f"a {B.IN2_NECK_MIN} mm In2 neck carries {amps:.2f} A, under 2 x the {B.V3V3_LOAD} A load")

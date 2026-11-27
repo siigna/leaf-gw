@@ -153,10 +153,10 @@ NARROW_STUBS = {"USB_DP": ("J3", 2.5), "USB_DM": ("J3", 2.5)}
 # via spots to finish on two signal layers (README "Known limits").
 H_PREPREG = 0.2104
 REF_MARGIN = 1 * H_PREPREG
-# In2 (the +3V3 plane) carries only the scripted VIN12 pass-throughs and, at
+# In2 (the +3V3 plane) carries only the VIN12 hops into J2 (routes.passthrough) and, at
 # most, repair hops of this length; its +3V3 fill must keep a neck at least
 # IN2_NECK_MIN wide everywhere it joins (checked by eroding the fill).
-IN2_NETS = ()   # routes.VIN12_ON_IN2 is off: nothing runs long on In2
+IN2_NETS = ()   # the VIN12 hops into J2 are ~3.6 mm, inside IN2_HOP_MAX
 IN2_HOP_MAX = 5.0
 IN2_NECK_MIN = 1.0
 V3V3_LOAD = 0.150   # A, SPEC "Power": about 150 mA board total, an upper bound for 3V3

@@ -10,6 +10,7 @@
 #                                 layout check (freerouting isn't deterministic, so
 #                                 the files differ byte for byte; validity is what
 #                                 has to reproduce). Keeps it at /tmp/lgw/rebuilt/
+#                                 (or $LGW_REBUILT)
 #
 # No `set -e`: every stage runs and reports, the exit code says if any failed.
 cd "$(dirname "$0")" || exit 1
@@ -90,9 +91,9 @@ EOF
 
 if [ "${1:-}" = "--rebuild" ]; then
   stage "reproducible: a fresh build passes the same checks"
-  re=/tmp/lgw/rebuilt
+  re=${LGW_REBUILT:-/tmp/lgw/rebuilt}   # set it to run several rebuilds side by side
   rm -rf "$re" && mkdir -p "$re"
-  (cd layout && LGW_PCB="$re/leaf_gw.kicad_pcb" LGW_WORK="$re/work" kicad-python build.py >/dev/null) || fail=1
+  (cd layout && LGW_PCB="$re/leaf_gw.kicad_pcb" LGW_WORK="$re/work" kicad-python build.py > "$re/build.log" 2>&1) || { tail -5 "$re/build.log"; fail=1; }
   cp layout/leaf_gw.kicad_pro layout/leaf_gw.kicad_dru "$re/"
   kicad-cli pcb drc --severity-all --format json -o "$re/drc.json" "$re/leaf_gw.kicad_pcb" >/dev/null || fail=1
   python3 - "$re/drc.json" <<'EOF2' || fail=1

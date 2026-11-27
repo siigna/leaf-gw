@@ -11,6 +11,9 @@ KiCad graphic polygons have no holes, so each hole is joined to its outer ring
 by a zero-width cut (keyholing); keyholed() returns the rings that go into the
 footprint, polygons() the logical shapes the checks measure.
 
+The back carries a second mark, esd_paw(): an ESD warning triangle with a
+paw cut out of it, drawn here from ellipses (our own art, MIT).
+
     python3 logo.py      # prints size and the measured minimum line and gap
 """
 
@@ -167,6 +170,58 @@ def polygons():
     return list(getattr(s, "geoms", [s]))
 
 
+ESD_WIDTH = 9.0   # mm, the paw triangle's base
+
+
+def esd_paw(width=ESD_WIDTH):
+    """Solid triangle, apex up, with a paw (pad and four toes) cut out; mm,
+    origin at the top-left of its bounding box, y down, cleaned for silkscreen."""
+    from shapely.geometry import Point
+
+    def ell(cx, cy, rx, ry, rot=0.0):
+        e = affinity.scale(Point(0, 0).buffer(1.0, quad_segs=16), rx, ry)
+        return affinity.translate(affinity.rotate(e, rot), cx, cy)
+    h = math.sqrt(3) / 2
+    r = 0.06    # corner rounding, in units of the base
+    tri = Polygon([(0.5, 0), (1, h), (0, h)]).buffer(-r).buffer(r)
+    paw = unary_union([ell(0.5, 0.645, 0.13, 0.10),
+                       ell(0.33, 0.52, 0.04, 0.055, -25), ell(0.43, 0.43, 0.04, 0.055, -8),
+                       ell(0.57, 0.43, 0.04, 0.055, 8), ell(0.67, 0.52, 0.04, 0.055, 25)])
+    shape = affinity.scale(tri.difference(paw), width, width, origin=(0, 0))
+    minx, miny = shape.bounds[:2]
+    return cleaned(affinity.translate(shape, -minx, -miny))
+
+
+QR_URL = "HTTPS://GITHUB.COM/SIIGNA/LEAF-GW"   # upper case: QR alphanumeric mode, version 2 (25 x 25); GitHub paths ignore case
+QR_MODULE = 0.45   # mm
+QR_QUIET = 4       # modules of light margin (the QR standard's quiet zone)
+# Silkscreen is the light colour on a dark mask (green, black, blue, purple,
+# red): the dark modules are left bare. For a white or yellow mask with black
+# silkscreen set this True, so the dark modules are printed instead; zbar did
+# not read the other polarity there.
+QR_DARK_SILK = False
+
+
+def qr_matrix(text=QR_URL):
+    import segno
+    q = segno.make(text, error="m", micro=False)
+    return [list(row) for row in q.matrix]
+
+
+def qr(text=QR_URL, module=QR_MODULE):
+    """The QR code as silkscreen (see QR_DARK_SILK): a light square, quiet zone
+    included, with the dark modules left bare; mm, origin top-left, y down."""
+    from shapely.geometry import box
+    m = qr_matrix(text)
+    n = len(m) + 2 * QR_QUIET
+    dark = unary_union([box((c + QR_QUIET) * module, (r + QR_QUIET) * module,
+                            (c + QR_QUIET + 1) * module, (r + QR_QUIET + 1) * module)
+                        for r, row in enumerate(m) for c, v in enumerate(row) if v])
+    if QR_DARK_SILK:
+        return dark.simplify(0)
+    return box(0, 0, n * module, n * module).difference(dark).simplify(0)
+
+
 def min_feature_violations(shape, size=SILK_MIN):
     """(thin-line area, thin-gap area): what an opening / closing at size/2 changes."""
     r = size / 2 * 0.999
@@ -211,3 +266,21 @@ if __name__ == "__main__":
     half = Polygon(subpaths("M0,0 A1,1 0 0,1 2,0 Z")[0])
     assert abs(half.area - math.pi / 2) < 5e-3, half.area   # 32 chords per half turn
     print("path parser ok (arcs, potrace)")
+    paw = esd_paw()
+    pt, pg = min_feature_violations(paw)
+    assert pt < EPS_AREA and pg < EPS_AREA and len(paw.interiors) == 5, (pt, pg, len(paw.interiors))
+    print(f"esd paw {paw.bounds[2]:.2f} x {paw.bounds[3]:.2f} mm, 5 cut-outs, lines and gaps >= {SILK_MIN} mm")
+    # QR: every module centre reads back as the matrix says (light = silkscreen)
+    from shapely.geometry import Point
+    m, code = qr_matrix(), qr()
+    bad = sum((not code.contains(Point((c + QR_QUIET + 0.5) * QR_MODULE, (r + QR_QUIET + 0.5) * QR_MODULE))) != bool(v)
+              for r, row in enumerate(m) for c, v in enumerate(row))
+    assert bad == 0 and len(m) == 25, (bad, len(m))
+    QR_DARK_SILK = True   # the other polarity: silkscreen exactly where the matrix is dark
+    inv = qr()
+    QR_DARK_SILK = False
+    bad = sum(inv.contains(Point((c + QR_QUIET + 0.5) * QR_MODULE, (r + QR_QUIET + 0.5) * QR_MODULE)) != bool(v)
+              for r, row in enumerate(m) for c, v in enumerate(row))
+    assert bad == 0, bad
+    side = code.bounds[2]
+    print(f"qr {len(m)} x {len(m)} modules, {side:.2f} mm square, reads back as encoded")

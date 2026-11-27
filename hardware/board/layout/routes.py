@@ -269,11 +269,7 @@ SWDIO_VIA = (28.75, 26.6)    # SWDIO (PA13) sits right above USB D+ at the MCU: 
 # pins sit between its package and CAN0, so their way out is planned while the
 # board is still open.
 PREROUTE = [
-    # the long 12 V pass-throughs first, while the board is empty: freerouting
-    # leaves them for last and then can't fit 0.5 mm tracks
-    ("IGN", ("J1", "14"), ("J2", "14")),
-    ("VIN12_10", ("J1", "10"), ("J2", "10")),
-    ("VIN12_12", ("J1", "12"), ("J2", "12")),
+    # (the header pass-throughs are scripted: passthrough() below)
     ("VIN_PROT", ("C26", "1"), ("R17", "1")),
     # the transceivers' STB lines from the MCU's left side, the longest runs
     # (after the MCU's top row they found no way through)
@@ -289,33 +285,6 @@ PREROUTE = [
     ("CAN3_TX", ("U1", "50"), ("U4", "1")),
     ("CAN3_RX", ("U1", "41"), ("U4", "4")),
 ]
-
-
-# VIN12_10/12 (12 V pass-through, 0.5 mm) on In2, the power layer. They run
-# under CAN0, where the pair's via keepout bars vias anyway, so they cost no via
-# spots; J2's pins 10 and 12 sit on its outer row behind the unconnected 9/11,
-# so VIN12_12 turns up around J2's top end and VIN12_10 down around its bottom
-# end (inside the locator hole) to reach them from the board-edge side.
-VIN12_ON_IN2 = False   # on the 70 x 45 board they fit on the outer layers (PREROUTE)
-
-
-def in2_lines(pad):
-    return _spread(_in2_lines, pad)
-
-
-def _in2_lines(pad):
-    """[(net, width, points)] drawn on In2.Cu."""
-    if not VIN12_ON_IN2:
-        return []
-    w = B.V12_W
-    j10, j12 = pad("J1", "10"), pad("J1", "12")
-    k10, k12 = pad("J2", "10"), pad("J2", "12")
-    return [
-        ("VIN12_12", w, [j12, (6.9, j12[1]), (6.9, 23.4), (49.0, 23.4), (49.0, 8.7), (56.6, 8.7),
-                         (56.6, k12[1]), k12]),
-        ("VIN12_10", w, [j10, (6.0, j10[1]), (6.0, 24.2), (49.8, 24.2), (49.8, 30.0), (55.95, 30.0),
-                         (55.95, k10[1]), k10]),
-    ]
 
 
 def vias(pad):
@@ -361,3 +330,79 @@ UNCOUPLED = {k: [(*B.spread(x0, y0), *B.spread(x1, y1), why) for x0, y0, x1, y1,
 # (x0, y0, x1, y1), board mm; build.dsn_prepare and repair.Grid honour it.
 _J2 = placement.P["J2"]
 VIA_KEEPOUT = [(_J2[0] + 1.0 + 0.75, _J2[1] - 10.0, B.W, _J2[1] + 10.0)]
+
+
+# --- the header pass-throughs, scripted -------------------------------------
+# J1 and J2 sit in the same orientation, so a pass-through pin is on the
+# board-side row of one header and on the edge-side row of the other. Odd pins
+# (the bus loops 3, 5, 13, 15) leave J1's edge-side row by squeezing between
+# J1's board-side pads, which a thin track does. Even pins (IGN 2/14, 12 V
+# 10/12) are 0.5 mm tracks and can't pass between J2's 1.5 mm pads on 2 mm
+# pitch, which used to force every route around J2's ends and made them cross.
+# Here every non-CAN pass-through runs on B.Cu in pin order, so none crosses
+# another, and the wide ones enter J2's pin field on In2, where J2's other pads
+# have no copper ring (build.passthrough_pads) and 1.2 mm between holes fits
+# 0.5 mm. IGN can't take an In2 hop (it carries the comma's supply), so its
+# J2 side is an F.Cu lane in the board-edge strip from the fuse F1 to pins 14
+# and 2; J1.2 reaches J2.2 under the headers. Top group (loop 15, IGN 14,
+# loop 13, 12 V 12) runs in the band spread() opened under the top parts, the
+# bottom group (12 V 10, loops 5 and 3, IGN 2) in the band under CAN0. All in
+# board mm; numbers checked against pads 1.5 mm, holes 0.8 mm, locators
+# 1.4 mm at (7.7, 30.7) / (73.5, 30.7), 0.15 mm clearance.
+PT_SIG_W = B.SIGNAL_CLASS_W
+PT_IGN_W = 0.6
+
+
+def passthrough(pad):
+    """([(net, width, layer, [points])], [(net, (x, y))]); layer is "F", "B" or "In2"."""
+    j1 = lambda n: pad("J1", str(n))   # noqa: E731
+    j2 = lambda n: pad("J2", str(n))   # noqa: E731
+    f1 = pad("F1", "1")
+    s, v, g = PT_SIG_W, B.V12_W, PT_IGN_W
+    T = [
+        # top group, B.Cu lanes at y 8.4 / 8.95 / 9.4 / 9.95 (outermost first)
+        ("IGN", g, "B", [j1(14), (5.8, 17.5), (5.8, 8.4), (f1[0], 8.4)]),
+        ("IGN", g, "F", [(f1[0], 8.4), f1]),
+        ("IGN", g, "F", [(f1[0], 8.4), (71.7, 8.4), (71.7, 17.5), j2(14)]),
+        ("IGN", g, "F", [(71.7, 17.5), (71.7, 29.5), j2(2)]),
+        ("BUS2_LOOP_15", s, "F", [j1(15), (3.6, 16.5), (6.6, 16.5)]),
+        ("BUS2_LOOP_15", s, "B", [(6.6, 16.5), (6.6, 8.95), (66.6, 8.95), (66.6, 15.5), j2(15)]),
+        ("BUS2_LOOP_13", s, "B", [j1(13), (3.6, 18.5), (7.2, 18.5), (7.2, 9.4), (66.1, 9.4), (66.1, 17.5), j2(13)]),
+        ("VIN12_12", v, "B", [j1(12), (7.8, 19.5), (7.8, 9.95), (65.5, 9.95), (65.5, 18.5), (67.2, 18.5)]),
+        ("VIN12_12", v, "In2", [(67.2, 18.5), (69.4, 18.5), j2(12)]),
+        # bottom group, B.Cu lanes at y 32.0 / 32.6 / 33.05 / 33.7 (outermost last)
+        ("VIN12_10", v, "B", [j1(10), (9.0, 21.5), (9.0, 32.0), (66.1, 32.0), (66.1, 20.5), (67.2, 20.5)]),
+        ("VIN12_10", v, "In2", [(67.2, 20.5), (69.4, 20.5), j2(10)]),
+        ("BUS0_LOOP_5", s, "B", [j1(5), (3.6, 26.5), (6.25, 26.5), (6.25, 32.6), (66.75, 32.6), (66.75, 25.5), j2(5)]),
+        ("BUS0_LOOP_3", s, "B", [j1(3), (3.6, 28.5), (5.8, 28.5), (5.8, 33.05), (67.2, 33.05), (67.2, 27.5), j2(3)]),
+        ("IGN", g, "B", [j1(2), (j1(2)[0], 33.7), (j2(2)[0], 33.7), j2(2)]),
+    ]
+    V = [("IGN", (f1[0], 8.4)), ("BUS2_LOOP_15", (6.6, 16.5)),
+         ("VIN12_12", (67.2, 18.5)), ("VIN12_10", (67.2, 20.5))]
+    return T, V
+
+
+# J2 pads that lose their inner-layer rings, so the In2 hops pass between holes
+PT_IN2_CLEAR = ("J2", [str(n) for n in range(1, 19) if n not in (10, 12)])
+
+
+# Short links drawn straight on F.Cu (pad to adjacent pad, nothing between):
+# left to the routers, these sometimes came out unjoined in crowded clusters.
+# Each transceiver's VCC to its decoupling cap, each termination jumper to its
+# resistor, and each split termination's midpoint resistor to its cap.
+LOCAL_LINKS = [
+    ("U2", "3", "C13", "1"), ("U3", "3", "C16", "1"), ("U4", "3", "C19", "1"),
+    ("JP1", "2", "R5", "1"), ("JP2", "2", "R6", "2"), ("R6", "1", "C15", "1"),
+    ("JP3", "2", "R7", "1"), ("R7", "2", "C18", "1"), ("JP4", "2", "R8", "2"),
+    ("JP6", "2", "R10", "2"),
+]
+
+
+def local_links(pad, net_of):
+    """[(net, width, "F", [a, b])]; net_of(ref, pad) names the pad's net."""
+    out = []
+    for u, a, c, k in LOCAL_LINKS:
+        net = net_of(u, a)
+        assert net == net_of(c, k), f"{u}.{a} and {c}.{k} are on different nets"
+        out.append((net, B.POWER_W if net.startswith("+") else 0.25, "F", [pad(u, a), pad(c, k)]))
+    return out
