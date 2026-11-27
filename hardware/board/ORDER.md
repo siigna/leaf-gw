@@ -23,6 +23,9 @@ upload.
 | option | choose | why |
 |---|---|---|
 | Base material | FR-4 | |
+| Material type | FR4-TG155 if offered, else TG135 | margin for reflow and a hot cabin; keep whichever still offers the JLC04161H-7628 stackup (below) |
+| Different design | 1 | |
+| Delivery format | single PCB | 75 × 50 mm assembles without a panel |
 | Layers | 4 | |
 | Dimensions | 75 × 50 mm (read from the Gerbers) | |
 | PCB qty | 5 | the first batch: bring-up and spares |
@@ -31,6 +34,7 @@ upload.
 | Solder mask colour | purple | the colour previews are in `out/render/colors/` |
 | Silkscreen | white | |
 | Surface finish | **ENIG** | the leaf on the top is exposed copper and reads as gold only with ENIG; HASL leaves it lumpy and silver |
+| Gold thickness | 1 µ″ | ENIG's standard; thicker gold is for edge connectors that wear, which this board has none of |
 | Outer copper | 1 oz | |
 | Inner copper | 0.5 oz | the In2 checks assume 15.2 µm inner copper |
 | Via covering | tented | the board is drawn with tented vias |
