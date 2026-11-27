@@ -1,9 +1,9 @@
 # Art
 
-`escargot-snail.svg` is the ESCargot snail mark, copied from the ESCargot
-tool's `res/art/snail.traced.svg` (the master trace). It goes on the board's
-silkscreen.
-
-It is not covered by the repository's MIT license. See the note at the end of
-[`LICENSE`](../../../LICENSE): boards built unmodified from these files may carry
-it; modified designs must remove it.
+- `leaf.svg` is the board's silkscreen mark: Phosphor Icons' "leaf" (fill
+  weight), from `@phosphor-icons/core` 2.1.1. MIT licensed; its notice is in
+  [`LICENSE-phosphor-icons`](LICENSE-phosphor-icons) and must stay with it.
+- `escargot-snail.svg` is the ESCargot snail mark, copied from the ESCargot
+  tool's `res/art/snail.traced.svg`. It was the first silkscreen mark and is no
+  longer on the board. It is not covered by the repository's MIT license; see
+  the note at the end of [`LICENSE`](../../../LICENSE).

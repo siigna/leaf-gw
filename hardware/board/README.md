@@ -247,8 +247,9 @@ these class widths keep a necked track at or above 0.127 mm and 0.5 mm.
 `check_layout.sh` (flake check `board-layout`) runs these stages:
 
 1. **Self-checks.** The impedance geometries are within 3 % of target, and
-   the logo conversion works: the cleaned logo has no line or gap under
-   0.15 mm, and a keyholed polygon with holes survives the round trip.
+   the logo conversion works: the cleaned leaf has no line or gap under
+   0.15 mm, a keyholed polygon with holes survives the round trip, and the
+   SVG path parser gets an arc's area right and still reads the old snail.
 2. **Freshness.** `leaf_gw.kicad_pro` and `.kicad_dru` match the generator.
 3. **DRC.** `kicad-cli pcb drc --severity-all` reports 0 errors, 0 warnings
    and 0 unconnected items, against the JLC rules above. Schematic parity is
@@ -286,7 +287,10 @@ these class widths keep a necked track at or above 0.127 mm and 0.5 mm.
    - silkscreen: the logo, as drawn on the board, has lines and gaps of at
      least 0.15 mm, is about 12 mm wide and sits on the top. No silkscreen on
      either side comes within 0.15 mm of a solder-mask opening or runs off
-     the board.
+     the board;
+   - pin labels: each header has exactly one back-side label per pin row
+     ("n … / n+1 …"), its centre within 0.3 mm of that row's pins, on the
+     header's inner side with its near end 0.15 to 5 mm from the pads.
 5. **Mutation tests** (`checks/test_layout_mutations.py`). Each test loads the
    real board, breaks it in memory and asserts that its check fails for the
    intended reason:
@@ -314,6 +318,7 @@ these class widths keep a necked track at or above 0.127 mm and 0.5 mm.
    | a pass-through loop's tracks removed | copper safety (open) |
    | the logo moved onto MCU pins | silkscreen (pad opening) |
    | a 0.1 mm line added to the logo | silkscreen (line width) |
+   | a J2 pin label moved 1 mm off its row | pin labels |
    | a CAN0_H stub run into CAN0_L, saved and run through `kicad-cli pcb drc` | DRC |
 
    The unmutated board must pass every check.
@@ -322,9 +327,15 @@ these class widths keep a necked track at or above 0.127 mm and 0.5 mm.
    every BOM line must have an LCSC number, and the CPL must list exactly the
    BOM parts.
 
-`./check_layout.sh --rebuild` also rebuilds the board in a temp dir and
-requires it to match the committed one byte for byte. That takes freerouting's
-40 minutes, so the flake check leaves it out.
+`./check_layout.sh --rebuild` also builds a fresh board in /tmp/lgw/rebuilt
+and requires it to pass the DRC and the layout checks. That takes about 40
+minutes, so the flake check leaves it out. Fresh builds don't reliably
+converge yet (see "Known limits").
+
+Silkscreen-only changes don't need a re-route: `kicad-python build.py
+--silk-only` (in `layout/`) redraws the logo and all silkscreen text on the
+saved board from `placement.py` and `logo.py` and leaves copper and fills
+alone.
 
 ### Regenerating
 
@@ -381,8 +392,15 @@ part of the safety design, so state it on the drawing.
   0 warnings and 0 unconnected items, and every layout check and mutation
   test passes. It was built by `build.py` and then had its dangling vias and
   stubs removed by the same `drop_dangling` pass `build.py` now ends with
-  (that pass's via test was fixed after the build); a fresh
-  `./check_layout.sh --rebuild` has not been run on it.
+  (that pass's via test was fixed after the build). Its silkscreen (the leaf,
+  the realigned back-side pin labels) was then redrawn with `--silk-only`;
+  tracks, vias and zone fills are unchanged.
+- **Fresh rebuilds don't reliably converge.** A fresh build left VIN12_12 open
+  once: freerouting isn't deterministic, and the 12 V pass-throughs must go
+  round one of J2's ends, which forces crossings with the bus loops. The work
+  toward scripting those crossings is parked on branch
+  `layout-determinism-wip` (its commit message has the results and next
+  steps).
 
 - **CAN1 ADAS pair is never coupled.** It runs from J1's pins around
   transceiver 1 to the relay's COM contacts. All of that is header breakout,

@@ -154,15 +154,15 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
 
 ### Silkscreen branding
 
-- The ESCargot snail mark, `art/escargot-snail.svg` (copied from
-  `tool/res/art/snail.traced.svg`, the master trace), about 12 mm wide on the
-  top side. Convert it to a footprint by script: flatten the curves to polygons
-  and keyhole the holes, since KiCad graphic polygons can't have holes. Keep
-  every line and gap at least 0.15 mm (JLCPCB's silkscreen minimum).
+- A leaf, `art/leaf.svg` (Phosphor Icons' "leaf", fill weight, MIT; notice in
+  `art/LICENSE-phosphor-icons`), about 12 mm wide on the top side. Convert it to
+  a footprint by script: flatten the curves to polygons and keyhole any holes,
+  since KiCad graphic polygons can't have holes. Keep every line and gap at
+  least 0.15 mm (JLCPCB's silkscreen minimum).
 - Plain silkscreen text beside it: `leaf-gw`, the board revision, and
   `© 2026 Stephen Bouche · MIT`.
-- The full wordmark and lockup aren't used: their thin script letters break up
-  at this size.
+- The board first carried the ESCargot snail; the leaf replaced it as a better
+  fit for a Leaf project.
 
 ## Automated checks (the reviewer stand-in)
 

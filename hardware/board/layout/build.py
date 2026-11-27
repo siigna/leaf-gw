@@ -1,6 +1,7 @@
 """Build the leaf-gw PCB from out/leaf_gw.net, deterministically.
 
     kicad-python build.py [--no-route]
+    kicad-python build.py --silk-only   # redraw logo + silkscreen text on the saved board
 
 Steps (each a function below):
   1. project + rules files (leaf_gw.kicad_pro, leaf_gw.kicad_dru)
@@ -443,15 +444,15 @@ def autoroute(b, work, passes):
 
 
 def logo_footprint(b, x, y):
-    """The snail as filled F.SilkS polygons (keyholed: KiCad polygons have no holes)."""
+    """The logo (logo.py: the leaf) as filled F.SilkS polygons (keyholed: KiCad polygons have no holes)."""
     fp = K.FOOTPRINT(b)
     fp.SetReference("LOGO")
     fp.Reference().SetVisible(False)
     fp.Reference().SetLayer(K.F_Fab)
-    fp.SetValue("ESCargot snail")
+    fp.SetValue("leaf logo")
     fp.Value().SetVisible(False)
     fp.Value().SetLayer(K.F_Fab)
-    fp.SetFPID(K.LIB_ID("leaf_gw", "ESCargot_snail"))
+    fp.SetFPID(K.LIB_ID("leaf_gw", "leaf_logo"))
     fp.SetAttributes(K.FP_BOARD_ONLY | K.FP_EXCLUDE_FROM_BOM | K.FP_EXCLUDE_FROM_POS_FILES)
     fp.SetPosition(pt(x, y))
     for poly in logo.polygons():
@@ -928,8 +929,27 @@ def normalise(path):
         fh.write(text)
 
 
+def redo_silkscreen():
+    """Replace the logo and the board silkscreen text on the saved board with
+    what silkscreen() draws now, touching nothing else (no copper, no fills):
+    for silkscreen-only changes without a re-route."""
+    b = K.LoadBoard(B.PCB)
+    for fp in list(b.GetFootprints()):
+        if fp.GetReference() == "LOGO":
+            b.Delete(fp)
+    for d in list(b.GetDrawings()):
+        if d.GetClass() == "PCB_TEXT" and d.GetLayer() in (K.F_SilkS, K.B_SilkS):
+            b.Delete(d)
+    silkscreen(b)
+    K.SaveBoard(B.PCB, b)
+    normalise(B.PCB)
+    write_project(os.path.join(os.path.dirname(B.PCB), "leaf_gw.kicad_pro"))   # SaveBoard rewrote it
+
+
 if __name__ == "__main__":
-    if "--phase2" in sys.argv:
+    if "--silk-only" in sys.argv:
+        redo_silkscreen()
+    elif "--phase2" in sys.argv:
         build_routed(route="--no-route" not in sys.argv)
     else:
         build_placed()

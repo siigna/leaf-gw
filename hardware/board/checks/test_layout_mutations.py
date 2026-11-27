@@ -233,6 +233,13 @@ class Mutations(unittest.TestCase):
             lg.Add(s)
         self.bites(L.check_silk, m, "lines under 0.15")
 
+    def test_pin_label_off_row(self):
+        def m(bd):
+            for _, it in L.silk_items(bd, K.B_SilkS):
+                if it.GetClass() == "PCB_TEXT" and it.GetText().startswith("5 bus0 loop / 6 CAN0 L "):
+                    it.Move(K.VECTOR2I(0, mm(1.0)))   # a pin pitch down: beside the wrong row
+        self.bites(L.check_pin_labels, m, "J2 label '5 bus0 loop / 6 CAN0 L'")
+
     # the DRC itself
     def test_drc_catches_clearance(self):
         bd = self.board()

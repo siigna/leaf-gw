@@ -175,7 +175,7 @@ P = {
 # width, rotation, justification); x, y is the text anchor. Everything sits in
 # the few strips clear of pads and part bodies; checks/layout.py verifies pad
 # clearance and the logo's line and gap widths.
-LOGO = (37.95, 22.5)          # top-left corner of the ~12 x 6 mm snail
+LOGO = (37.95, 22.5)          # top-left corner of the ~12 mm logo (logo.py)
 SILK_TEXT = {
     "\u00a9 2026 Stephen Bouche \u00b7 MIT": (21.9, 23.5, 1.0, 0.65, 0, "left"),
     "leaf-gw rev {rev}": (49.1, 21.9, 1.0, 0.8, 90, "left"),
@@ -186,21 +186,21 @@ SILK_TEXT = {
 PIN_NAMES = {1: "GND", 2: "IGN", 3: "bus0 loop", 4: "CAN0 H", 5: "bus0 loop", 6: "CAN0 L",
              7: "CAN1 L car", 8: "CAN1 H car", 9: "CAN1 H ADAS", 10: "12V", 11: "CAN1 L ADAS",
              12: "12V", 13: "bus2 loop", 14: "IGN", 15: "bus2 loop", 16: "CAN2 H", 17: "GND", 18: "CAN2 L"}
-BACK_TEXT = {}
+BACK_ROWS = {}   # one per header row, at that row's height
 for _col in range(9):
     _odd, _even = 2 * _col + 1, 2 * _col + 2
     _y = header_pin(J1X, _odd)[1]
     # justification is as seen from the top; mirrored text on the back runs the other way
-    BACK_TEXT[f"{_odd} {PIN_NAMES[_odd]} / {_even} {PIN_NAMES[_even]}"] = (9.6, _y, 1.0, 0.6, 0, "right")
+    BACK_ROWS[f"{_odd} {PIN_NAMES[_odd]} / {_even} {PIN_NAMES[_even]}"] = (9.6, _y, 1.0, 0.6, 0, "right")
     _right = {9: "n/c", 11: "n/c"}
-    BACK_TEXT[f"{_odd} {_right.get(_odd, PIN_NAMES[_odd])} / {_even} {PIN_NAMES[_even]} "] = (49.4, _y, 1.0, 0.6, 0, "left")
-BACK_TEXT.update({
+    BACK_ROWS[f"{_odd} {_right.get(_odd, PIN_NAMES[_odd])} / {_even} {PIN_NAMES[_even]} "] = (49.4, _y, 1.0, 0.6, 0, "left")
+BACK_TEXT = {
     "CAR HARNESS": (7.6, 2.5, 1.2, 1.0, 0, "right"),
     "TO BOX (9/11 open)": (51.4, 2.5, 1.2, 1.0, 0, "left"),
     "BENCH / TEST CAR ONLY": (22.0, 31.0, 1.5, 1.2, 0, "center"),
     "leaf-gw rev {rev}": (25.0, 34.0, 1.2, 1.0, 0, "center"),
     "\u00a9 2026 Stephen Bouche \u00b7 MIT": (25.0, 36.2, 1.0, 0.7, 0, "center"),
-})
+}
 
 
 # Open the drawing up to the real outline (board.spread); the mounting holes go
@@ -212,3 +212,7 @@ P["SW1"] = (P["SW1"][0], P["SW1"][1] - 3.6, 90)   # up out of H2's corner
 LOGO = B.spread(*LOGO)
 SILK_TEXT = {t: (*B.spread(x, y), *rest) for t, (x, y, *rest) in SILK_TEXT.items()}
 BACK_TEXT = {t: (*B.spread(x, y), *rest) for t, (x, y, *rest) in BACK_TEXT.items()}
+# a row label sits at its header row's height and its header's distance (from
+# the compact drawing), not moved by the block its anchor falls in
+_dx = {9.6: P["J1"][0] - J1X, 49.4: P["J2"][0] - J2X}
+BACK_TEXT.update({t: (x + _dx[x], B.spread(J1X, y)[1], *rest) for t, (x, y, *rest) in BACK_ROWS.items()})

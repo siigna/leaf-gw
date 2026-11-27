@@ -13,6 +13,7 @@ Needs pcbnew (kicad-python in `nix develop .#hardware`) and shapely.
 
 import math
 import os
+import re
 import sys
 
 import pcbnew as K
@@ -549,6 +550,48 @@ def check_silk(bd):
     return f
 
 
+LABEL_RE = re.compile(r"^(\d+) .+ / (\d+) ")
+LABEL_Y_TOL = 0.3     # mm: a pin label's centre to its pin row
+LABEL_GAP = 5.0       # mm: the most a label's near end may sit from its header's pads
+
+
+def check_pin_labels(bd):
+    """Back-side pin labels: each header has one per pin row (n odd / n+1),
+    centred within LABEL_Y_TOL of that row's pins, beside the header on its
+    inner side, its near end clear of the pads and within LABEL_GAP of them."""
+    f = []
+    rows = {"J1": {}, "J2": {}}
+    inner = {r: xy(bd.pad(r, "2" if r == "J1" else "1").GetPosition())[0] for r in rows}
+    for who, it in silk_items(bd, K.B_SilkS):
+        if it.GetClass() != "PCB_TEXT":
+            continue
+        m = LABEL_RE.match(it.GetText())
+        if not m:
+            continue
+        odd, even = int(m.group(1)), int(m.group(2))
+        g = item_shape(it, K.B_SilkS)
+        x0, y0, x1, y1 = g.bounds
+        ref = min(rows, key=lambda r: abs((x0 + x1) / 2 - inner[r]))
+        name = f"{ref} label '{it.GetText().strip()}'"
+        if even != odd + 1 or odd % 2 == 0:
+            f.append(f"{name}: not a pin row")
+            continue
+        rows[ref].setdefault(odd, []).append(name)
+        py = xy(bd.pad(ref, str(odd)).GetPosition())[1]
+        if abs((y0 + y1) / 2 - py) > LABEL_Y_TOL:
+            f.append(f"{name}: centre at y={(y0 + y1) / 2:.2f}, its pins at y={py:.2f}")
+        r = 1.5 / 2                                    # iGrid pad radius
+        gap = x0 - (inner[ref] + r) if ref == "J1" else (inner[ref] - r) - x1
+        if not B.JLC["silk_to_pad"] <= gap <= LABEL_GAP:
+            f.append(f"{name}: x {x0:.2f}..{x1:.2f}, {gap:.2f} mm from {ref}'s inner row "
+                     f"(wanted {B.JLC['silk_to_pad']} to {LABEL_GAP}, on its inner side)")
+    for ref, got in rows.items():
+        for odd in range(1, 18, 2):
+            if len(got.get(odd, [])) != 1:
+                f.append(f"{ref}: {len(got.get(odd, []))} labels for pins {odd}/{odd + 1}")
+    return f
+
+
 def ipc2221_internal_amps(width_mm, rise_c=10.0, cu_mm=None):
     """IPC-2221 internal-conductor current: I = 0.024 dT^0.44 A^0.725, A in mil^2.
     Conservative next to IPC-2152, which rates internal conductors higher."""
@@ -584,7 +627,7 @@ def check_in2(bd):
 
 
 CHECKS = [check_parity, check_top_side, check_pairs, check_mismatch, check_reference_plane,
-          check_12v_width, check_keepouts, check_copper_safety, check_silk, check_in2]
+          check_12v_width, check_keepouts, check_copper_safety, check_silk, check_pin_labels, check_in2]
 
 
 def run(bd):
