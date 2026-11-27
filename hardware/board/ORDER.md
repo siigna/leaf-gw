@@ -57,7 +57,18 @@ colour from the previews. Don't drop ENIG.
 | PCBA type | Standard | the two 18-pin headers are through-hole; Economic doesn't place them |
 | Assembly side | top | every part is on the top (`check_top_side`) |
 | PCBA qty | 5 (or 2 to start) | |
-| Tooling holes | added by JLCPCB | |
+| Edge rails / fiducials | added by JLCPCB | the board has no fiducials of its own |
+| Depanel boards and edge rails before delivery | **yes** | otherwise the rails arrive attached; leftover breakaway tabs can keep the board out of the case (0.5 mm clearance) |
+| Confirm parts placement | **yes**, on the first order | JLC's engineer sends the placement to approve: check the table below there |
+| Photo confirmation | yes, if it's cheap | photos of the built boards before they ship |
+| Parts selection | by customer | every BOM line has an LCSC number |
+| Solder paste | high temp (lead-free) | |
+| Bake components, nitrogen reflow, special stencil | no | JLC handles the moisture-sensitive parts |
+| Board cleaning | optional | flux residue only |
+| Flying probe / function test (assembly) | no | the bare-board electrical test covers the copper; `backends/panda/BRINGUP.md` is the function test |
+| Conformal coating | **no** | it would cover the termination jumpers and the SWD and test pads |
+| Stencil / fixture storage, assembly remark | no | |
+| Packaging | antistatic bubble film | |
 | Through-hole parts (J1, J2) | assembled by JLCPCB | or leave them off and hand-solder: 2 × 18 pins |
 
 ### At the BOM step
@@ -69,7 +80,7 @@ colour from the previews. Don't drop ENIG.
 - If one is out of stock, stop and swap it in the schematic (`schematic/`).
   Don't let JLC substitute.
 
-### At the placement preview
+### At the placement preview (and the placement confirmation)
 
 The CPL rotations for these parts come from community tables, not from each
 part's own footprint. Check each against its pin 1 / orientation mark in the
