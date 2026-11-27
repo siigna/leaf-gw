@@ -30,16 +30,22 @@ upload.
 | Dimensions | 75 × 50 mm (read from the Gerbers) | |
 | PCB qty | 5 | the first batch: bring-up and spares |
 | Thickness | 1.6 mm | |
-| Impedance control | yes, stackup **JLC04161H-7628** | the CAN (120 Ω) and USB (90 Ω) pair geometry is calculated for this stackup (`layout/impedance.py`) |
+| Specify stackup (impedance) | **yes: JLC04161H-7628** | the CAN (120 Ω) and USB (90 Ω) pair geometry is calculated for this stackup (`layout/impedance.py`); "no" leaves the stackup to JLC |
+| Specify layer sequence | no | the Gerbers name each layer |
 | Solder mask colour | purple | the colour previews are in `out/render/colors/` |
 | Silkscreen | white | |
 | Surface finish | **ENIG** | the leaf on the top is exposed copper and reads as gold only with ENIG; HASL leaves it lumpy and silver |
 | Gold thickness | 1 µ″ | ENIG's standard; thicker gold is for edge connectors that wear, which this board has none of |
 | Outer copper | 1 oz | |
 | Inner copper | 0.5 oz | the In2 checks assume 15.2 µm inner copper |
-| Via covering | tented | the board is drawn with tented vias |
-| Min via hole / diameter | 0.3 / 0.6 mm (no upgrade needed) | |
+| Via covering | tented or plugged | drawn tented (no mask openings on vias); plugged is as good |
+| Via plating method | not specified | |
+| Min via hole / diameter | the 0.3 mm option (no upgrade needed) | the board's vias are 0.3 / 0.6 mm |
+| Board outline tolerance | ±0.2 mm (regular) | the case leaves 0.5 mm around the board |
 | Mark on PCB (order number) | remove it, or specify a location | JLC's default spot may land on the silkscreen or the leaf |
+| Confirm production file | yes, on the first order | approve JLC's processed files: catches a missed stackup, a mark left on, a misread layer |
+| Electrical test | flying probe, full | |
+| Gold fingers, castellated, press-fit, edge plating, blind slots, UL marking, backdrill, humidity card | no | none of them are used |
 
 If JLC doesn't offer purple with ENIG for this stackup, pick another mask
 colour from the previews. Don't drop ENIG.
