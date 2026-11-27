@@ -29,7 +29,7 @@ from shapely.ops import unary_union
 import board as B
 
 SVG = os.path.join(B.BOARD_DIR, "art", "leaf.svg")   # Phosphor Icons "leaf", fill (MIT, art/LICENSE-phosphor-icons)
-WIDTH = 12.0
+WIDTH = 10.5     # mm; the largest that fits the clear spot on the top side (placement.LOGO)
 SILK_MIN = B.JLC["silk_width_min"]
 STEPS = 16       # line segments per cubic
 EPS_AREA = 1e-4  # mm^2: what the morphological checks may differ by (float noise)

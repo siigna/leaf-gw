@@ -341,12 +341,15 @@ VIA_KEEPOUT = [(_J2[0] + 1.0 + 0.75, _J2[1] - 10.0, B.W, _J2[1] + 10.0)]
 # pitch, which used to force every route around J2's ends and made them cross.
 # Here every non-CAN pass-through runs on B.Cu in pin order, so none crosses
 # another, and the wide ones enter J2's pin field on In2, where J2's other pads
-# have no copper ring (build.passthrough_pads) and 1.2 mm between holes fits
+# have no copper ring (PT_IN2_CLEAR) and 1.2 mm between holes fits
 # 0.5 mm. IGN can't take an In2 hop (it carries the comma's supply), so its
 # J2 side is an F.Cu lane in the board-edge strip from the fuse F1 to pins 14
 # and 2; J1.2 reaches J2.2 under the headers. Top group (loop 15, IGN 14,
-# loop 13, 12 V 12) runs in the band spread() opened under the top parts, the
-# bottom group (12 V 10, loops 5 and 3, IGN 2) in the band under CAN0. All in
+# loop 13) runs in the band spread() opened under the top parts, the bottom
+# group (12 V 12 and 10, loops 5 and 3, IGN 2) in the band under CAN0. 12 V 12
+# rides with the bottom group (pin order matches at both ends either way): in
+# the top group its lane left the V-CAN cluster's supply only a 0.4 mm via
+# window between the bundle and the CAN2 pair, which freerouting kept missing. All in
 # board mm; numbers checked against pads 1.5 mm, holes 0.8 mm, locators
 # 1.4 mm at (7.7, 30.7) / (73.5, 30.7), 0.15 mm clearance.
 PT_SIG_W = B.SIGNAL_CLASS_W
@@ -360,7 +363,7 @@ def passthrough(pad):
     f1 = pad("F1", "1")
     s, v, g = PT_SIG_W, B.V12_W, PT_IGN_W
     T = [
-        # top group, B.Cu lanes at y 8.4 / 8.95 / 9.4 / 9.95 (outermost first)
+        # top group, B.Cu lanes at y 8.4 / 8.95 / 9.4 (outermost first)
         ("IGN", g, "B", [j1(14), (5.8, 17.5), (5.8, 8.4), (f1[0], 8.4)]),
         ("IGN", g, "F", [(f1[0], 8.4), f1]),
         ("IGN", g, "F", [(f1[0], 8.4), (71.7, 8.4), (71.7, 17.5), j2(14)]),
@@ -368,9 +371,9 @@ def passthrough(pad):
         ("BUS2_LOOP_15", s, "F", [j1(15), (3.6, 16.5), (6.6, 16.5)]),
         ("BUS2_LOOP_15", s, "B", [(6.6, 16.5), (6.6, 8.95), (66.6, 8.95), (66.6, 15.5), j2(15)]),
         ("BUS2_LOOP_13", s, "B", [j1(13), (3.6, 18.5), (7.2, 18.5), (7.2, 9.4), (66.1, 9.4), (66.1, 17.5), j2(13)]),
-        ("VIN12_12", v, "B", [j1(12), (7.8, 19.5), (7.8, 9.95), (65.5, 9.95), (65.5, 18.5), (67.2, 18.5)]),
+        # bottom group, B.Cu lanes at y 31.35 / 32.0 / 32.6 / 33.05 / 33.7 (outermost last)
+        ("VIN12_12", v, "B", [j1(12), (9.7, 19.5), (9.7, 31.35), (65.4, 31.35), (65.4, 18.5), (67.2, 18.5)]),
         ("VIN12_12", v, "In2", [(67.2, 18.5), (69.4, 18.5), j2(12)]),
-        # bottom group, B.Cu lanes at y 32.0 / 32.6 / 33.05 / 33.7 (outermost last)
         ("VIN12_10", v, "B", [j1(10), (9.0, 21.5), (9.0, 32.0), (66.1, 32.0), (66.1, 20.5), (67.2, 20.5)]),
         ("VIN12_10", v, "In2", [(67.2, 20.5), (69.4, 20.5), j2(10)]),
         ("BUS0_LOOP_5", s, "B", [j1(5), (3.6, 26.5), (6.25, 26.5), (6.25, 32.6), (66.75, 32.6), (66.75, 25.5), j2(5)]),

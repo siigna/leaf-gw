@@ -464,7 +464,11 @@ def autoroute(b, work, passes):
 
 
 def logo_footprint(b, x, y):
-    """The logo (logo.py: the leaf) as filled F.SilkS polygons (keyholed: KiCad polygons have no holes)."""
+    """The logo (logo.py: the leaf) as exposed copper: one custom-shape pad on
+    F.Cu with no net, its solder-mask opening the same shape, so with an ENIG
+    finish it reads as a gold leaf and the vein (a gap in the copper) stays
+    under mask. Being a pad, every router and the zone fill keep clear of it."""
+    from shapely.ops import unary_union
     fp = K.FOOTPRINT(b)
     fp.SetReference("LOGO")
     fp.Reference().SetVisible(False)
@@ -475,21 +479,37 @@ def logo_footprint(b, x, y):
     fp.SetFPID(K.LIB_ID("leaf_gw", "leaf_logo"))
     fp.SetAttributes(K.FP_BOARD_ONLY | K.FP_EXCLUDE_FROM_BOM | K.FP_EXCLUDE_FROM_POS_FILES)
     fp.SetPosition(pt(x, y))
-    for poly in logo.polygons():
-        ring = logo.keyholed(poly)
-        s = K.PCB_SHAPE(fp, K.SHAPE_T_POLY)
-        chain = K.SHAPE_LINE_CHAIN()
-        for px, py in ring:
-            chain.Append(mm(B.ORIGIN[0] + x + px), mm(B.ORIGIN[1] + y + py))
-        chain.SetClosed(True)
+    shape = unary_union(logo.polygons())
+    anchor = shape.representative_point()   # the custom pad's anchor must lie on its copper
+    pad = K.PAD(fp)
+    pad.SetNumber("")
+    pad.SetAttribute(K.PAD_ATTRIB_SMD)
+    layers = K.LSET()
+    layers.AddLayer(K.F_Cu)
+    layers.AddLayer(K.F_Mask)    # no F.Paste: nothing is soldered here
+    pad.SetLayerSet(layers)
+    pad.SetShape(K.F_Cu, K.PAD_SHAPE_CUSTOM)
+    pad.SetAnchorPadShape(K.F_Cu, K.PAD_SHAPE_CIRCLE)
+    pad.SetSize(K.F_Cu, K.VECTOR2I(mm(0.3), mm(0.3)))
+    pad.SetPosition(pt(x + anchor.x, y + anchor.y))
+    pad.SetLocalSolderMaskMargin(mm(LOGO_MASK_MARGIN))
+    for poly in getattr(shape, "geoms", [shape]):
         ps = K.SHAPE_POLY_SET()
-        ps.AddOutline(chain)
-        s.SetPolyShape(ps)
-        s.SetFilled(True)
-        s.SetWidth(0)
-        s.SetLayer(K.F_SilkS)
-        fp.Add(s)
+        for k, ring in enumerate([poly.exterior] + list(poly.interiors)):
+            if k == 0:
+                ps.NewOutline()
+            else:
+                ps.NewHole()
+            for px, py in list(ring.coords)[:-1]:
+                ps.Append(mm(px - anchor.x), mm(py - anchor.y), -1, -1 if k == 0 else k - 1)
+        pad.AddPrimitivePoly(K.F_Cu, ps, 0, True)
+    fp.Add(pad)
     b.Add(fp)
+
+
+# The mask overlaps the leaf's copper edge by this much, so JLC's mask
+# registration (about 0.05 mm) can't show a sliver of bare substrate beside it.
+LOGO_MASK_MARGIN = -0.05
 
 
 def silk_text(b, text, x, y, size=1.0, width=None, layer=K.F_SilkS, rot=0, just="left", knockout=False):

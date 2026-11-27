@@ -60,7 +60,8 @@ CAN as the car receives it, which is what the openpilot follow check reads.
 
 ### MCU
 
-STM32F413RGT6 (LQFP64), 8 MHz HSE crystal (the panda clock setup expects it),
+STM32F413RGT6 (LQFP64), 8 MHz HSE crystal (the RetroPilot tree's `clock_init()`
+assumes the Ocelot's 16 MHz; our board image sets its own PLL, `backends/panda/board_leaf_gw.h`),
 BOOT0 with a pull-down and a test pad / button for ROM DFU, NRST with a pad,
 SWD pads (SWDIO, SWCLK, NRST, 3V3, GND).
 
@@ -159,10 +160,14 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
 ### Silkscreen branding
 
 - A leaf, `art/leaf.svg` (Phosphor Icons' "leaf", fill weight, MIT; notice in
-  `art/LICENSE-phosphor-icons`), about 12 mm wide on the top side. Convert it to
-  a footprint by script: flatten the curves to polygons and keyhole any holes,
-  since KiCad graphic polygons can't have holes. Keep every line and gap at
-  least 0.15 mm (JLCPCB's silkscreen minimum).
+  `art/LICENSE-phosphor-icons`), about 10.5 mm wide on the top side, in
+  exposed copper: one custom-shape pad with no net, its solder mask opened
+  (0.05 mm inside the copper edge), so with an ENIG finish it is a gold leaf
+  and the vein stays under mask. It sits on the one spot of the top side about
+  11 mm square that no fixed copper, pad or courtyard crosses; being a pad,
+  the routers and the GND pour keep clear of it. Convert the SVG by script:
+  flatten the curves to polygons. Keep every line and gap at least 0.15 mm.
+  `ORDER.md` asks for ENIG for this reason.
 - Plain silkscreen text beside it: `leaf-gw`, the board revision, and
   `© 2026 Stephen Bouche · MIT`.
 - The board first carried the ESCargot snail; the leaf replaced it as a better

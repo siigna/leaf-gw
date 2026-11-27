@@ -511,37 +511,38 @@ def silk_items(bd, layer):
 
 
 def logo_shape(bd):
+    """The leaf's exposed copper: the LOGO footprint's pad on F.Cu."""
     lg = bd.fps.get("LOGO")
     if lg is None:
         return None
-    polys = []
-    for s in lg.GraphicalItems():
-        if s.GetClass() == "PCB_SHAPE" and s.GetShape() == K.SHAPE_T_POLY:
-            o = s.GetPolyShape().Outline(0)
-            # a keyholed ring: buffer(0) turns the zero-width cut back into a hole
-            polys.append(Polygon([xy(o.CPoint(j)) for j in range(o.PointCount())]).buffer(0))
-    return unary_union(polys)
+    return unary_union([item_shape(p, K.F_Cu) for p in lg.Pads() if p.IsOnLayer(K.F_Cu)])
 
 
 def check_silk(bd):
-    """Logo lines and gaps at least the JLC silkscreen minimum (0.15 mm) and
-    about 12 mm wide on the top; on both sides, no silkscreen within
-    silk_to_pad of a pad's solder-mask opening, none off the board."""
+    """The copper leaf: on the top, no net, a mask opening and no paste, lines
+    and gaps at least 0.15 mm, about 10.5 mm wide. On both sides, no
+    silkscreen within silk_to_pad of a pad's solder-mask opening, none off the
+    board."""
     f = []
     shape = logo_shape(bd)
     if shape is None or shape.is_empty:
-        f.append("no LOGO footprint with polygons")
+        f.append("no LOGO footprint with copper")
     else:
         if bd.fps["LOGO"].IsFlipped():
             f.append("logo is on the bottom side")
+        for p in bd.fps["LOGO"].Pads():
+            if p.GetNetname():
+                f.append(f"logo copper is on net {p.GetNetname()}")
+            if not p.IsOnLayer(K.F_Mask) or p.IsOnLayer(K.F_Paste):
+                f.append("logo copper needs a mask opening and no paste")
         thin, gaps = logo.min_feature_violations(shape)
         if thin > logo.EPS_AREA:
             f.append(f"logo has lines under {B.JLC['silk_width_min']} mm ({thin:.4f} mm^2)")
         if gaps > logo.EPS_AREA:
             f.append(f"logo has gaps under {B.JLC['silk_width_min']} mm ({gaps:.4f} mm^2)")
         w = shape.bounds[2] - shape.bounds[0]
-        if not 10.5 <= w <= 13.0:
-            f.append(f"logo is {w:.2f} mm wide (SPEC: about 12)")
+        if not 10.0 <= w <= 11.0:
+            f.append(f"logo is {w:.2f} mm wide (SPEC: about 10.5)")
     outline = box(0, 0, B.W, B.H).buffer(-0.1)
     for silk, mask_layer in ((K.F_SilkS, K.F_Mask), (K.B_SilkS, K.B_Mask)):
         mask = [item_shape(p, mask_layer) for fp in bd.fps.values() for p in fp.Pads() if p.IsOnLayer(mask_layer)]

@@ -175,7 +175,6 @@ P = {
 # width, rotation, justification); x, y is the text anchor. Everything sits in
 # the few strips clear of pads and part bodies; checks/layout.py verifies pad
 # clearance and the logo's line and gap widths.
-LOGO = (37.95, 22.5)          # top-left corner of the ~12 mm logo (logo.py)
 SILK_TEXT = {
     "\u00a9 2026 Stephen Bouche \u00b7 MIT": (21.9, 23.5, 1.0, 0.65, 0, "left"),
     "leaf-gw rev {rev}": (49.1, 21.9, 1.0, 0.8, 90, "left"),
@@ -234,7 +233,10 @@ P = {r: (*B.spread(x, y), rot) for r, (x, y, rot) in P.items()}
 P["H1"] = (3.0, 3.0, 0)
 P["H2"] = (B.W - 3.0, B.H - 3.0, 0)
 P["SW1"] = (P["SW1"][0], P["SW1"][1] - 3.6, 90)   # up out of H2's corner
-LOGO = B.spread(*LOGO)
+# Top-left corner of the ~10.5 mm copper leaf (logo.py, build.logo_footprint), in
+# board mm: the one spot on the top side about 11 mm square that no fixed
+# copper (CAN, USB pairs), pad or courtyard crosses; the routers go around it.
+LOGO = (52.75, 27.75)
 SILK_TEXT = {t: (*B.spread(x, y), *rest) for t, (x, y, *rest) in SILK_TEXT.items()}
 BACK_TEXT = {t: (*B.spread(x, y), *rest) for t, (x, y, *rest) in BACK_TEXT.items()}
 # a row label sits at its header row's height and its header's distance (from

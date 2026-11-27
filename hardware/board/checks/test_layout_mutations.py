@@ -244,26 +244,25 @@ class Mutations(unittest.TestCase):
     # silkscreen
     def test_silk_on_pad(self):
         def m(bd):
-            x, y = L.xy(bd.pad("U1", "1").GetPosition())
-            bd.fps["LOGO"].SetPosition(pt(x - 1, y - 1))
+            t = next(d for d in bd.pcb.GetDrawings() if d.GetClass() == "PCB_TEXT" and d.GetLayer() == K.F_SilkS)
+            t.SetPosition(bd.pad("U1", "1").GetPosition())
         self.bites(L.check_silk, m, "solder-mask opening")
+
+    def _logo_pad(self, bd):
+        return next(iter(bd.fps["LOGO"].Pads()))
 
     def test_logo_thin_line(self):
         def m(bd):
-            lg = bd.fps["LOGO"]
-            s = K.PCB_SHAPE(lg, K.SHAPE_T_POLY)
-            KEEP.append(s)
-            s.thisown = False
-            x, y = L.xy(lg.GetPosition())
-            ps = K.SHAPE_POLY_SET()
+            pad = self._logo_pad(bd)
+            ps = K.SHAPE_POLY_SET()   # a 0.1 mm sliver of copper off the leaf, in pad coordinates
             ps.NewOutline()
-            for px, py in ((x + 1, y + 7), (x + 5, y + 7), (x + 5, y + 7.1), (x + 1, y + 7.1)):
-                ps.Append(mm(L.B.ORIGIN[0] + px), mm(L.B.ORIGIN[1] + py))
-            s.SetPolyShape(ps)
-            s.SetFilled(True)
-            s.SetLayer(K.F_SilkS)
-            lg.Add(s)
+            for px, py in ((-6, 6), (-2, 6), (-2, 6.1), (-6, 6.1)):
+                ps.Append(mm(px), mm(py))
+            pad.AddPrimitivePoly(K.F_Cu, ps, 0, True)
         self.bites(L.check_silk, m, "lines under 0.15")
+
+    def test_logo_on_a_net(self):
+        self.bites(L.check_silk, lambda bd: self._logo_pad(bd).SetNet(bd.pcb.FindNet("GND")), "logo copper is on net GND")
 
     def test_pin_label_off_row(self):
         def m(bd):

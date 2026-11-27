@@ -13,6 +13,7 @@ fails on a broken board.
 | path | what |
 |---|---|
 | `SPEC.md` | the contract |
+| `ORDER.md` | how to order from JLCPCB (files, options, what to check in the preview) and how to make the board-to-box cable |
 | `schematic/` | SKiDL, one module per block: `connectors`, `mcu`, `can`, `relay`, `power`, `usb`; `parts.py` holds every part with its LCSC number; `nets.py` names the nets; `board.py` builds the board and writes `out/` |
 | `footprints/leaf_gw.pretty/` | project footprints for parts KiCad's library lacks (the Molex iGrid header) |
 | `out/leaf_gw.net` | KiCad netlist, for phase 3 to import into the PCB |
@@ -513,7 +514,8 @@ system memory.
   or halted under SWD reset. That is what makes flashing possible, and in all
   three states PB12 is high-Z and its pull-down keeps the relay off. While
   firmware runs, a stalled kick pin times out in 0.9–2.5 s. The firmware must
-  toggle PC6 at least every 0.9 s; `gw_panda.c` doesn't yet (phase 5).
+  toggle PC6 at least every 0.9 s; the board image does so every 100 ms from
+  the main loop, only while healthy (`gw_supervisor.c`).
   Breakpoints longer than that reset the MCU.
 - **Buck at 5.16 V, not 5.0 V** (27k / 4.7k on the 0.765 V reference). After the
   OR diode, +5V_SYS has to stay inside the TJA1042's 4.5–5.5 V VCC range. The
