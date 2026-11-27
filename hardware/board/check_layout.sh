@@ -89,6 +89,27 @@ if {r["Designator"] for r in cpl} != set(f):
 sys.exit(1 if bad or empty else 0)
 EOF
 
+stage "CPL in the Gerbers' frame: positions = KiCad's own position export, every part on the board"
+kicad-cli pcb export pos --format csv --units mm --side front -o "$tmp/pos.csv" "$pcb" >/dev/null || fail=1
+python3 - out/fab/leaf_gw-cpl.csv "$tmp/pos.csv" out/fab/leaf_gw-cpl-corrections.csv <<'EOF' || fail=1
+import csv, sys
+cpl = {r["Designator"]: (float(r["Mid X"][:-2]), float(r["Mid Y"][:-2])) for r in csv.DictReader(open(sys.argv[1]))}
+pos = {r["Ref"]: (float(r["PosX"]), float(r["PosY"])) for r in csv.DictReader(open(sys.argv[2]))}
+off = {r["Designator"]: r["Offset (dx dy mm)"] != "0 0" for r in csv.DictReader(open(sys.argv[3]))}
+bad = []
+for ref, (x, y) in cpl.items():
+    px, py = pos[ref]
+    d = ((x - px) ** 2 + (y - py) ** 2) ** 0.5
+    if d > (3.0 if off[ref] else 0.001):   # a package-origin correction moves a part by that offset only
+        bad.append(f"{ref}: CPL ({x}, {y}) vs KiCad ({px}, {py})")
+    if not (100.0 <= x <= 175.0 and -150.0 <= y <= -100.0):   # the outline in the Gerbers (board.ORIGIN, W, H)
+        bad.append(f"{ref}: ({x}, {y}) is off the board in the Gerbers' frame")
+for b in bad[:10]:
+    print("  " + b)
+print(f"  {len(cpl)} CPL rows checked against KiCad's position export")
+sys.exit(1 if bad else 0)
+EOF
+
 if [ "${1:-}" = "--rebuild" ]; then
   stage "reproducible: a fresh build passes the same checks"
   re=${LGW_REBUILT:-/tmp/lgw/rebuilt}   # set it to run several rebuilds side by side

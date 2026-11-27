@@ -142,14 +142,16 @@ def cpl_rows(b):
             continue
         name = str(fp.GetFPID().GetLibItemName())
         rot, (dx, dy), _ = correction(name)
-        x, y = K.ToMM(fp.GetPosition().x) - B.ORIGIN[0], K.ToMM(fp.GetPosition().y) - B.ORIGIN[1]
+        # the Gerbers' frame: KiCad's absolute coordinates, Y up (Gerber), so
+        # JLC finds each part on the board without an origin to guess
+        x, y = K.ToMM(fp.GetPosition().x), K.ToMM(fp.GetPosition().y)
         a = fp.GetOrientationDegrees()
         import math
         t = math.radians(a)
         # footprint frame (y down, KiCad turns CCW on screen) -> board frame
         ox = dx * math.cos(t) + dy * math.sin(t)
         oy = -dx * math.sin(t) + dy * math.cos(t)
-        rows.append((fp.GetReference(), f"{x + ox:.4f}mm", f"{B.H - (y + oy):.4f}mm", "Top",
+        rows.append((fp.GetReference(), f"{x + ox:.4f}mm", f"{-(y + oy):.4f}mm", "Top",
                      f"{(a + rot) % 360:.1f}"))
     return sorted(rows, key=lambda r: natural(r[0]))
 
