@@ -5,8 +5,11 @@
 #   ./check_layout.sh             check the committed layout and fab outputs
 #   ./check_layout.sh --update    rebuild layout/leaf_gw.kicad_pcb (freerouting,
 #                                 about 40 minutes), fab outputs and renders first
-#   ./check_layout.sh --rebuild   also rebuild into a temp dir and require the
-#                                 committed board to match it byte for byte
+#   ./check_layout.sh --rebuild   also rebuild from scratch into a temp dir and
+#                                 require the rebuilt board to pass DRC and every
+#                                 layout check (freerouting isn't deterministic, so
+#                                 the files differ byte for byte; validity is what
+#                                 has to reproduce). Keeps it at /tmp/lgw/rebuilt/
 #
 # No `set -e`: every stage runs and reports, the exit code says if any failed.
 cd "$(dirname "$0")" || exit 1
@@ -86,10 +89,20 @@ sys.exit(1 if bad or empty else 0)
 EOF
 
 if [ "${1:-}" = "--rebuild" ]; then
-  stage "reproducible: a fresh build gives the committed board"
-  mkdir -p "$tmp/re"
-  (cd layout && LGW_PCB="$tmp/re/leaf_gw.kicad_pcb" LGW_WORK="$tmp/re/work" kicad-python build.py >/dev/null) || fail=1
-  cmp -s "$pcb" "$tmp/re/leaf_gw.kicad_pcb" || { echo "rebuild differs from $pcb"; fail=1; }
+  stage "reproducible: a fresh build passes the same checks"
+  re=/tmp/lgw/rebuilt
+  rm -rf "$re" && mkdir -p "$re"
+  (cd layout && LGW_PCB="$re/leaf_gw.kicad_pcb" LGW_WORK="$re/work" kicad-python build.py >/dev/null) || fail=1
+  cp layout/leaf_gw.kicad_pro layout/leaf_gw.kicad_dru "$re/"
+  kicad-cli pcb drc --severity-all --format json -o "$re/drc.json" "$re/leaf_gw.kicad_pcb" >/dev/null || fail=1
+  python3 - "$re/drc.json" <<'EOF2' || fail=1
+import json, sys
+r = json.load(open(sys.argv[1]))
+v, u = r.get("violations", []), r.get("unconnected_items", [])
+print(f"  rebuilt board: {len(v)} violations, {len(u)} unconnected")
+sys.exit(1 if v or u else 0)
+EOF2
+  (cd checks && kicad-python layout.py "$re/leaf_gw.kicad_pcb") || fail=1
 fi
 
 [ $fail -eq 0 ] && echo "board-layout: all checks passed" || echo "board-layout: FAILED"
