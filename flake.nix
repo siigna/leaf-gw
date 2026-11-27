@@ -34,7 +34,8 @@
       # `kicad-python` is that interpreter with pcbnew on its path.
       layoutTools = pkgs:
         let
-          py = pkgs.python3.withPackages (ps: [ ps.shapely ps.segno ]);
+          # manifold3d/trimesh/rtree/scipy/matplotlib: the enclosure (hardware/enclosure)
+          py = pkgs.python3.withPackages (ps: [ ps.shapely ps.segno ps.manifold3d ps.trimesh ps.rtree ps.scipy ps.matplotlib ]);
           kicadPython = pkgs.writeShellScriptBin "kicad-python" ''
             export PYTHONPATH=${pkgs.kicad-small.src}/lib/${pkgs.python3.libPrefix}/site-packages''${PYTHONPATH:+:$PYTHONPATH}
             export JLCTOOLS=''${JLCTOOLS:-${jlctools}}
@@ -137,6 +138,17 @@
           touch $out
         '';
 
+        # Enclosure (SPEC.md phase 6): STLs up to date, clearance to the board's
+        # part hulls, seating, walls, openings, printability, and their mutation
+        # tests. The slicer and the harness-plug stages skip here (no
+        # orca-slicer in the check; the plug model isn't in the repo).
+        enclosure = pkgs.runCommand "leaf-gw-enclosure"
+          { nativeBuildInputs = layoutTools pkgs; } ''
+          cp -r ${./hardware} hardware && chmod -R u+w hardware
+          HOME=$TMPDIR bash hardware/enclosure/check.sh
+          touch $out
+        '';
+
         openpilot-long = pkgs.runCommand "leaf-gw-openpilot-long-test"
           { nativeBuildInputs = [ (pkgs.python3.withPackages (ps: [ ps.numpy ])) ]; } ''
           cp ${./openpilot/leaf_gw_long.py} leaf_gw_long.py
@@ -170,6 +182,14 @@
         hardware = pkgs.mkShell ({ packages = [ (boardPython pkgs) ] ++ layoutTools pkgs; } // boardEnv pkgs // {
           KICAD10_3DMODEL_DIR = "${pkgs.kicad-small.libraries.packages3d}/share/kicad/3dmodels";
         });
+
+        # Enclosure (hardware/enclosure): everything in `hardware` plus the
+        # slicer for the 3MF stage and gmsh for the harness-plug STEP.
+        enclosure = pkgs.mkShell {
+          inputsFrom = [ self.devShells.${pkgs.system}.hardware ];
+          packages = [ pkgs.orca-slicer pkgs.gmsh ];
+          KICAD10_3DMODEL_DIR = "${pkgs.kicad-small.libraries.packages3d}/share/kicad/3dmodels";
+        };
 
         # Run the opendbc car-port and panda-safety patches' test suites.
         # opendbc needs Python < 3.13 (pycapnp); libsafety builds with cc + cffi.

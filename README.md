@@ -260,6 +260,8 @@ echo '(0) can0 1C3#000000006400FF27' | nix run .   # phase-0 validator on a cand
 nix develop                     # host dev shell (gcc, make, python+numpy)
 nix develop .#panda             # arm-none-eabi + scons, to build the Ocelot backend by hand
 nix develop .#openpilot         # python 3.12 + opendbc test deps, to run the car/safety patches
+nix develop .#hardware          # the board (hardware/board): KiCad, SKiDL, freerouting
+nix develop .#enclosure         # the case (hardware/enclosure): .#hardware plus OrcaSlicer, gmsh
 ```
 
 `nix build .#ocelot-firmware` is a sealed, offline build: it pulls the RetroPilot
