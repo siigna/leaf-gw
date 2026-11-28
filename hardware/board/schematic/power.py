@@ -1,12 +1,12 @@
-"""Power (SPEC.md "Power"): IGN -> PTC -> TVS -> reverse diode -> buck 5.2 V
+"""Power (SPEC.md "Power"): IGN -> PTC -> TVS -> reverse diode -> buck 5.3 V
 -> diode-OR with USB VBUS -> LDO 3.3 V.
 
-The buck sits at ~5.2 V, not 5.0, so that +5V_SYS after the OR diode stays
+The buck sits at ~5.3 V, not 5.0, so that +5V_SYS after the OR diode stays
 inside the TJA1042's 4.5-5.5 V VCC range; the relay coil (5 V, 150 % max, en-g6k.pdf
 p.3) runs from +5V_IGN before the diode.
 """
 
-from parts import part
+from parts import nobom, part
 
 
 def cap(key, net, gnd):
@@ -20,7 +20,7 @@ def build(n):
     f[1] += n.IGN
     f[2] += n.IGN_FUSED
 
-    tvs = part("D_TVS24")  # after the PTC: reverse battery conducts it and trips the PTC
+    tvs = part("D_TVS33")  # after the PTC: reverse battery conducts it and trips the PTC
     tvs["K"] += n.IGN_FUSED
     tvs["A"] += n.GND
 
@@ -28,7 +28,8 @@ def build(n):
     rev["A"] += n.IGN_FUSED
     rev["K"] += n.VIN_PROT
 
-    # LMR16006X buck (SNVSA24 fig. 9): Vout = 0.765 V * (1 + 27k / 4.7k) = 5.16 V
+    # LMR16006Y buck (SNVSA24 fig. 9): Vout = 0.765 V * (1 + 28k / 4.7k) = 5.32 V
+    # (VFB 0.747-0.782 V and 1 % resistors: 5.11-5.54 V; +5V_SYS is one Schottky drop lower)
     u = part("BUCK", ref="U7")
     u["VIN"] += n.VIN_PROT
     u["GND"] += n.GND
@@ -39,7 +40,7 @@ def build(n):
     r = part("R_100k")
     r[1] += n.VIN_PROT
     r[2] += n.BUCK_SHDN
-    for key in ("C_1u_50V", "C_1u_50V", "C_100n_50V"):
+    for key in ("C_2u2_50V", "C_2u2_50V", "C_100n_50V"):
         cap(key, n.VIN_PROT, n.GND)
     cb = part("C_100n_50V")
     cb[1] += n.BUCK_CB
@@ -47,10 +48,10 @@ def build(n):
     catch = part("D_SS210")
     catch["K"] += n.BUCK_SW
     catch["A"] += n.GND
-    ind = part("L_22u", ref="L1")
+    ind = part("L_6u8", ref="L1")
     ind[1] += n.BUCK_SW
     ind[2] += n.P5V_IGN
-    r1, r2 = part("R_27k"), part("R_4k7")
+    r1, r2 = part("R_28k"), part("R_4k7")
     r1[1] += n.P5V_IGN
     r1[2] += n.BUCK_FB
     r2[1] += n.BUCK_FB
@@ -80,8 +81,8 @@ def build(n):
     led["A"] += n.PWR_LED_A
     led["K"] += n.GND
 
-    # ignition sense on PA1: 100k/33k (12 V -> 2.9 V), clamped to 3V3
-    r1, r2 = part("R_100k"), part("R_33k")
+    # ignition sense on PA1: 100k/22k (12 V -> 2.16 V, 3.3 V at 18.3 V), clamped to 3V3
+    r1, r2 = part("R_100k"), part("R_22k")
     r1[1] += n.VIN_PROT
     r1[2] += n.IGN_SENSE
     r2[1] += n.IGN_SENSE
@@ -90,3 +91,9 @@ def build(n):
     clamp = part("D_1N4148W")
     clamp["A"] += n.IGN_SENSE
     clamp["K"] += n.P3V3
+
+    # test pads by the buck (bare copper, no BOM line)
+    for ref, name, net in (("TP7", "VIN", n.VIN_PROT), ("TP8", "5V_IGN", n.P5V_IGN),
+                           ("TP9", "5V_SYS", n.P5V_SYS), ("TP10", "GND", n.GND)):
+        tp = nobom("TP", name, ref=ref)
+        tp[1] += net

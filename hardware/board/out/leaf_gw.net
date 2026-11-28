@@ -133,14 +133,14 @@
       (tstamps "d4017ae0-ca40-581e-bf8a-e168323602ea"))
     (comp
       (ref "C12")
-      (value "100nF 16V")
+      (value "10nF 50V")
       (description "Unpolarized capacitor")
       (footprint "Capacitor_SMD:C_0402_1005Metric")
       (fields
         (field
-          (name "LCSC") "C1525")
+          (name "LCSC") "C15195")
         (field
-          (name "MPN") "CL05B104KO5NNNC")
+          (name "MPN") "CL05B103KB5NNNC")
         (field
           (name "Manufacturer") "Samsung")
         (field
@@ -523,18 +523,18 @@
       (tstamps "bec88687-5f6e-5537-8f36-ac7e90d623da"))
     (comp
       (ref "C24")
-      (value "1uF 50V")
+      (value "2.2uF 50V X7R")
       (description "Unpolarized capacitor")
       (footprint "Capacitor_SMD:C_0805_2012Metric")
       (fields
         (field
-          (name "LCSC") "C28323")
+          (name "LCSC") "C125847")
         (field
-          (name "MPN") "CL21B105KBFNNNE")
+          (name "MPN") "CC0805KKX7R9BB225")
         (field
-          (name "Manufacturer") "Samsung")
+          (name "Manufacturer") "YAGEO")
         (field
-          (name "JLC") "basic")
+          (name "JLC") "extended")
         (field
           (name "Description") "Unpolarized capacitor")
         (field
@@ -553,18 +553,18 @@
       (tstamps "92603c51-dffb-5a22-9eb1-41f10e8591b4"))
     (comp
       (ref "C25")
-      (value "1uF 50V")
+      (value "2.2uF 50V X7R")
       (description "Unpolarized capacitor")
       (footprint "Capacitor_SMD:C_0805_2012Metric")
       (fields
         (field
-          (name "LCSC") "C28323")
+          (name "LCSC") "C125847")
         (field
-          (name "MPN") "CL21B105KBFNNNE")
+          (name "MPN") "CC0805KKX7R9BB225")
         (field
-          (name "Manufacturer") "Samsung")
+          (name "Manufacturer") "YAGEO")
         (field
-          (name "JLC") "basic")
+          (name "JLC") "extended")
         (field
           (name "Description") "Unpolarized capacitor")
         (field
@@ -1303,16 +1303,16 @@
       (tstamps "68f6c72b-a475-524d-bd7b-c1b998873b90"))
     (comp
       (ref "D6")
-      (value "SMBJ24A")
+      (value "SMBJ33A")
       (description "Zener diode")
       (footprint "Diode_SMD:D_SMB")
       (fields
         (field
-          (name "LCSC") "C123819")
+          (name "LCSC") "C224019")
         (field
-          (name "MPN") "SMBJ24A")
+          (name "MPN") "SMBJ33A")
         (field
-          (name "Manufacturer") "MDD")
+          (name "Manufacturer") "Littelfuse")
         (field
           (name "JLC") "extended")
         (field
@@ -1423,14 +1423,14 @@
       (tstamps "181fe9e3-f81b-577a-9310-97d1057a1413"))
     (comp
       (ref "F1")
-      (value "200mA hold 30V")
+      (value "500mA hold 60V")
       (description "Resettable fuse, polymeric positive temperature coefficient")
-      (footprint "Fuse:Fuse_1206_3216Metric")
+      (footprint "Fuse:Fuse_1812_4532Metric")
       (fields
         (field
-          (name "LCSC") "C69680")
+          (name "LCSC") "C70113")
         (field
-          (name "MPN") "nSMD020-30V")
+          (name "MPN") "mSMD050-60V")
         (field
           (name "Manufacturer") "TECHFUSE")
         (field
@@ -1438,7 +1438,7 @@
         (field
           (name "Description") "Resettable fuse, polymeric positive temperature coefficient")
         (field
-          (name "Footprint") "Fuse:Fuse_1206_3216Metric")
+          (name "Footprint") "Fuse:Fuse_1812_4532Metric")
         (field
           (name "Datasheet"))
         (field
@@ -1716,15 +1716,45 @@
       (component_classes)
       (tstamps "d0559bf8-db6d-5882-ad90-3869b64cfb1b"))
     (comp
+      (ref "K2")
+      (value "G6K-2F-Y DC5")
+      (description "Miniature 2-pole relay, Single-side Stable")
+      (footprint "Relay_SMD:Relay_DPDT_Omron_G6K-2F-Y")
+      (fields
+        (field
+          (name "LCSC") "C2982926")
+        (field
+          (name "MPN") "G6K-2F-Y-5V")
+        (field
+          (name "Manufacturer") "Omron")
+        (field
+          (name "JLC") "extended")
+        (field
+          (name "Description") "Miniature 2-pole relay, Single-side Stable")
+        (field
+          (name "Footprint") "Relay_SMD:Relay_DPDT_Omron_G6K-2F-Y")
+        (field
+          (name "Datasheet") "http://omronfs.omron.com/en_US/ecb/products/pdf/en-g6k.pdf")
+        (field
+          (name "SKiDL Tag") "K2"))
+      (libsource
+        (lib "Relay")
+        (part "Omron_G6K-2"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "13326755-c3ad-5a0a-a60f-e1c5648997f3"))
+    (comp
       (ref "L1")
-      (value "22uH 1A")
+      (value "6.8uH 2.75A")
       (description "Inductor")
       (footprint "Inductor_SMD:L_Sunlord_SWPA4030S")
       (fields
         (field
-          (name "LCSC") "C83472")
+          (name "LCSC") "C62684")
         (field
-          (name "MPN") "SWPA4030S220MT")
+          (name "MPN") "SWPA4030S6R8MT")
         (field
           (name "Manufacturer") "Sunlord")
         (field
@@ -1927,18 +1957,18 @@
       (tstamps "2e9cb324-63c9-5ad4-ba1a-b618f4020bea"))
     (comp
       (ref "R14")
-      (value "27k")
+      (value "28k")
       (description "Resistor")
       (footprint "Resistor_SMD:R_0603_1608Metric")
       (fields
         (field
-          (name "LCSC") "C22967")
+          (name "LCSC") "C22989")
         (field
-          (name "MPN") "0603WAF2702T5E")
+          (name "MPN") "0603WAF2802T5E")
         (field
           (name "Manufacturer") "UNI-ROYAL")
         (field
-          (name "JLC") "basic")
+          (name "JLC") "extended")
         (field
           (name "Description") "Resistor")
         (field
@@ -2047,14 +2077,14 @@
       (tstamps "47689824-ff01-5dd6-9338-a42dda36a2ce"))
     (comp
       (ref "R18")
-      (value "33k")
+      (value "22k")
       (description "Resistor")
       (footprint "Resistor_SMD:R_0603_1608Metric")
       (fields
         (field
-          (name "LCSC") "C4216")
+          (name "LCSC") "C31850")
         (field
-          (name "MPN") "0603WAF3302T5E")
+          (name "MPN") "0603WAF2202T5E")
         (field
           (name "Manufacturer") "UNI-ROYAL")
         (field
@@ -2430,6 +2460,30 @@
       (component_classes)
       (tstamps "ec7b7017-d3a1-52a1-ab31-ef99bc577234"))
     (comp
+      (ref "TP10")
+      (value "GND")
+      (description "test point")
+      (footprint "TestPoint:TestPoint_Pad_D1.5mm")
+      (fields
+        (field
+          (name "no_bom") "test pad (bare copper)")
+        (field
+          (name "Description") "test point")
+        (field
+          (name "Footprint") "TestPoint:TestPoint_Pad_D1.5mm")
+        (field
+          (name "Datasheet"))
+        (field
+          (name "SKiDL Tag") "TP10"))
+      (libsource
+        (lib "Connector")
+        (part "TestPoint"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "96ec807f-2b34-5ae2-8bad-1cdcc5458929"))
+    (comp
       (ref "TP2")
       (value "SWCLK")
       (description "test point")
@@ -2549,6 +2603,78 @@
         (tstamps "/"))
       (component_classes)
       (tstamps "09741339-fe92-5d8d-9626-685dbcd30d75"))
+    (comp
+      (ref "TP7")
+      (value "VIN")
+      (description "test point")
+      (footprint "TestPoint:TestPoint_Pad_D1.5mm")
+      (fields
+        (field
+          (name "no_bom") "test pad (bare copper)")
+        (field
+          (name "Description") "test point")
+        (field
+          (name "Footprint") "TestPoint:TestPoint_Pad_D1.5mm")
+        (field
+          (name "Datasheet"))
+        (field
+          (name "SKiDL Tag") "TP7"))
+      (libsource
+        (lib "Connector")
+        (part "TestPoint"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "47117044-94ce-5dd7-abf9-83e3ef59bacb"))
+    (comp
+      (ref "TP8")
+      (value "5V_IGN")
+      (description "test point")
+      (footprint "TestPoint:TestPoint_Pad_D1.5mm")
+      (fields
+        (field
+          (name "no_bom") "test pad (bare copper)")
+        (field
+          (name "Description") "test point")
+        (field
+          (name "Footprint") "TestPoint:TestPoint_Pad_D1.5mm")
+        (field
+          (name "Datasheet"))
+        (field
+          (name "SKiDL Tag") "TP8"))
+      (libsource
+        (lib "Connector")
+        (part "TestPoint"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "dbebd152-e861-5059-b279-ee96be584c75"))
+    (comp
+      (ref "TP9")
+      (value "5V_SYS")
+      (description "test point")
+      (footprint "TestPoint:TestPoint_Pad_D1.5mm")
+      (fields
+        (field
+          (name "no_bom") "test pad (bare copper)")
+        (field
+          (name "Description") "test point")
+        (field
+          (name "Footprint") "TestPoint:TestPoint_Pad_D1.5mm")
+        (field
+          (name "Datasheet"))
+        (field
+          (name "SKiDL Tag") "TP9"))
+      (libsource
+        (lib "Connector")
+        (part "TestPoint"))
+      (sheetpath
+        (names "/")
+        (tstamps "/"))
+      (component_classes)
+      (tstamps "9850fe91-cf09-54be-87a9-d3a0cc96fc3e"))
     (comp
       (ref "U1")
       (value "STM32F413RGT6")
@@ -2731,14 +2857,14 @@
       (tstamps "aee7dbbb-30a2-5780-a35b-54386b8e659f"))
     (comp
       (ref "U7")
-      (value "LMR16006XDDCR")
+      (value "LMR16006YDDCR")
       (description "Simple Switcher Buck Regulator, Vin=4-40V, Iout=600mA, Adjustable output voltage, SOT-23-6 package")
       (footprint "Package_TO_SOT_SMD:SOT-23-6")
       (fields
         (field
-          (name "LCSC") "C87080")
+          (name "LCSC") "C290195")
         (field
-          (name "MPN") "LMR16006XDDCR")
+          (name "MPN") "LMR16006YDDCR")
         (field
           (name "Manufacturer") "TI")
         (field
@@ -2761,29 +2887,29 @@
       (tstamps "ab236476-70f8-5542-a3ab-0bc4462af286"))
     (comp
       (ref "U8")
-      (value "XC6206P332MR")
-      (description "Positive 60-250mA Low Dropout Regulator, Fixed Output, SOT-23")
+      (value "MCP1700T-3302E/TT")
+      (description "250mA Low Quiscent Current LDO, 3.3V output, SOT-23")
       (footprint "Package_TO_SOT_SMD:SOT-23-3")
       (fields
         (field
-          (name "LCSC") "C5446")
+          (name "LCSC") "C39051")
         (field
-          (name "MPN") "XC6206P332MR-G")
+          (name "MPN") "MCP1700T-3302E/TT")
         (field
-          (name "Manufacturer") "Torex")
+          (name "Manufacturer") "Microchip")
         (field
-          (name "JLC") "basic")
+          (name "JLC") "extended")
         (field
-          (name "Description") "Positive 60-250mA Low Dropout Regulator, Fixed Output, SOT-23")
+          (name "Description") "250mA Low Quiscent Current LDO, 3.3V output, SOT-23")
         (field
           (name "Footprint") "Package_TO_SOT_SMD:SOT-23-3")
         (field
-          (name "Datasheet") "https://www.torexsemi.com/file/xc6206/XC6206.pdf")
+          (name "Datasheet") "http://ww1.microchip.com/downloads/en/DeviceDoc/20001826D.pdf")
         (field
           (name "SKiDL Tag") "U8"))
       (libsource
         (lib "Regulator_Linear")
-        (part "XC6206PxxxMR"))
+        (part "MCP1700x-330xxTT"))
       (sheetpath
         (names "/")
         (tstamps "/"))
@@ -3011,11 +3137,19 @@
         (pin "A1")
         (pintype "PASSIVE"))
       (node
+        (ref "K2")
+        (pin "A1")
+        (pintype "PASSIVE"))
+      (node
         (ref "L1")
         (pin "2")
         (pintype "PASSIVE"))
       (node
         (ref "R14")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "TP8")
         (pin "1")
         (pintype "PASSIVE")))
     (net
@@ -3048,6 +3182,10 @@
         (pintype "PASSIVE"))
       (node
         (ref "D9")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "TP9")
         (pin "1")
         (pintype "PASSIVE"))
       (node
@@ -3243,10 +3381,6 @@
         (pin "9")
         (pintype "PASSIVE"))
       (node
-        (ref "JP1")
-        (pin "1")
-        (pintype "PASSIVE"))
-      (node
         (ref "K1")
         (pin "11")
         (pintype "PASSIVE"))
@@ -3265,10 +3399,6 @@
       (node
         (ref "J1")
         (pin "11")
-        (pintype "PASSIVE"))
-      (node
-        (ref "JP2")
-        (pin "1")
         (pintype "PASSIVE"))
       (node
         (ref "K1")
@@ -3295,12 +3425,12 @@
         (pin "8")
         (pintype "PASSIVE"))
       (node
-        (ref "JP3")
-        (pin "1")
-        (pintype "PASSIVE"))
-      (node
         (ref "K1")
         (pin "12")
+        (pintype "PASSIVE"))
+      (node
+        (ref "K2")
+        (pin "11")
         (pintype "PASSIVE"))
       (node
         (ref "U3")
@@ -3323,12 +3453,12 @@
         (pin "7")
         (pintype "PASSIVE"))
       (node
-        (ref "JP4")
-        (pin "1")
-        (pintype "PASSIVE"))
-      (node
         (ref "K1")
         (pin "22")
+        (pintype "PASSIVE"))
+      (node
+        (ref "K2")
+        (pin "21")
         (pintype "PASSIVE"))
       (node
         (ref "U3")
@@ -3727,6 +3857,10 @@
         (pin "2")
         (pintype "PASSIVE"))
       (node
+        (ref "TP10")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
         (ref "TP5")
         (pin "1")
         (pintype "PASSIVE"))
@@ -3880,6 +4014,54 @@
         (pintype "BIDIRECTIONAL")))
     (net
       (code 37)
+      (name "K1_NO_A")
+      (class "Default")
+      (node
+        (ref "JP1")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "K1")
+        (pin "14")
+        (pintype "PASSIVE")))
+    (net
+      (code 38)
+      (name "K1_NO_B")
+      (class "Default")
+      (node
+        (ref "JP2")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "K1")
+        (pin "24")
+        (pintype "PASSIVE")))
+    (net
+      (code 39)
+      (name "K2_NO_A")
+      (class "Default")
+      (node
+        (ref "JP3")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "K2")
+        (pin "14")
+        (pintype "PASSIVE")))
+    (net
+      (code 40)
+      (name "K2_NO_B")
+      (class "Default")
+      (node
+        (ref "JP4")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
+        (ref "K2")
+        (pin "24")
+        (pintype "PASSIVE")))
+    (net
+      (code 41)
       (name "LED_STATUS")
       (class "Default")
       (node
@@ -3891,7 +4073,7 @@
         (pin "38")
         (pintype "BIDIRECTIONAL")))
     (net
-      (code 38)
+      (code 42)
       (name "LED_STATUS_A")
       (class "Default")
       (node
@@ -3903,7 +4085,7 @@
         (pin "2")
         (pintype "PASSIVE")))
     (net
-      (code 39)
+      (code 43)
       (name "NRST")
       (class "Default")
       (node
@@ -3931,7 +4113,7 @@
         (pin "1")
         (pintype "OUTPUT")))
     (net
-      (code 40)
+      (code 44)
       (name "PWR_LED_A")
       (class "Default")
       (node
@@ -3943,7 +4125,7 @@
         (pin "2")
         (pintype "PASSIVE")))
     (net
-      (code 41)
+      (code 45)
       (name "RELAY_COIL_LO")
       (class "Default")
       (node
@@ -3955,11 +4137,15 @@
         (pin "A2")
         (pintype "PASSIVE"))
       (node
+        (ref "K2")
+        (pin "A2")
+        (pintype "PASSIVE"))
+      (node
         (ref "Q1")
         (pin "3")
         (pintype "PASSIVE")))
     (net
-      (code 42)
+      (code 46)
       (name "RELAY_EN")
       (class "Default")
       (node
@@ -3975,7 +4161,7 @@
         (pin "1")
         (pintype "INPUT")))
     (net
-      (code 43)
+      (code 47)
       (name "RELAY_GATE")
       (class "Default")
       (node
@@ -3991,7 +4177,7 @@
         (pin "4")
         (pintype "OUTPUT")))
     (net
-      (code 44)
+      (code 48)
       (name "SWCLK")
       (class "Default")
       (node
@@ -4003,7 +4189,7 @@
         (pin "49")
         (pintype "BIDIRECTIONAL")))
     (net
-      (code 45)
+      (code 49)
       (name "SWDIO")
       (class "Default")
       (node
@@ -4015,7 +4201,7 @@
         (pin "46")
         (pintype "BIDIRECTIONAL")))
     (net
-      (code 46)
+      (code 50)
       (name "TERM1_H")
       (class "Default")
       (node
@@ -4027,7 +4213,7 @@
         (pin "1")
         (pintype "PASSIVE")))
     (net
-      (code 47)
+      (code 51)
       (name "TERM1_L")
       (class "Default")
       (node
@@ -4039,7 +4225,7 @@
         (pin "2")
         (pintype "PASSIVE")))
     (net
-      (code 48)
+      (code 52)
       (name "TERM1_MID")
       (class "Default")
       (node
@@ -4055,7 +4241,7 @@
         (pin "1")
         (pintype "PASSIVE")))
     (net
-      (code 49)
+      (code 53)
       (name "TERM2_H")
       (class "Default")
       (node
@@ -4067,7 +4253,7 @@
         (pin "1")
         (pintype "PASSIVE")))
     (net
-      (code 50)
+      (code 54)
       (name "TERM2_L")
       (class "Default")
       (node
@@ -4079,7 +4265,7 @@
         (pin "2")
         (pintype "PASSIVE")))
     (net
-      (code 51)
+      (code 55)
       (name "TERM2_MID")
       (class "Default")
       (node
@@ -4095,7 +4281,7 @@
         (pin "1")
         (pintype "PASSIVE")))
     (net
-      (code 52)
+      (code 56)
       (name "TERM3_H")
       (class "Default")
       (node
@@ -4107,7 +4293,7 @@
         (pin "1")
         (pintype "PASSIVE")))
     (net
-      (code 53)
+      (code 57)
       (name "TERM3_L")
       (class "Default")
       (node
@@ -4119,7 +4305,7 @@
         (pin "2")
         (pintype "PASSIVE")))
     (net
-      (code 54)
+      (code 58)
       (name "TERM3_MID")
       (class "Default")
       (node
@@ -4135,7 +4321,7 @@
         (pin "2")
         (pintype "PASSIVE")))
     (net
-      (code 55)
+      (code 59)
       (name "USB_CC1")
       (class "Default")
       (node
@@ -4147,7 +4333,7 @@
         (pin "1")
         (pintype "PASSIVE")))
     (net
-      (code 56)
+      (code 60)
       (name "USB_CC2")
       (class "Default")
       (node
@@ -4159,7 +4345,7 @@
         (pin "1")
         (pintype "PASSIVE")))
     (net
-      (code 57)
+      (code 61)
       (name "USB_DM")
       (class "Default")
       (node
@@ -4183,7 +4369,7 @@
         (pin "4")
         (pintype "PASSIVE")))
     (net
-      (code 58)
+      (code 62)
       (name "USB_DP")
       (class "Default")
       (node
@@ -4207,7 +4393,7 @@
         (pin "6")
         (pintype "PASSIVE")))
     (net
-      (code 59)
+      (code 63)
       (name "VBUS")
       (class "Default")
       (node
@@ -4235,7 +4421,7 @@
         (pin "5")
         (pintype "PASSIVE")))
     (net
-      (code 60)
+      (code 64)
       (name "VCAP_1")
       (class "Default")
       (node
@@ -4247,7 +4433,7 @@
         (pin "30")
         (pintype "POWER-OUT")))
     (net
-      (code 61)
+      (code 65)
       (name "VIN12_10")
       (class "Default")
       (node
@@ -4259,7 +4445,7 @@
         (pin "10")
         (pintype "PASSIVE")))
     (net
-      (code 62)
+      (code 66)
       (name "VIN12_12")
       (class "Default")
       (node
@@ -4271,7 +4457,7 @@
         (pin "12")
         (pintype "PASSIVE")))
     (net
-      (code 63)
+      (code 67)
       (name "VIN_PROT")
       (class "Default")
       (node
@@ -4299,11 +4485,15 @@
         (pin "1")
         (pintype "PASSIVE"))
       (node
+        (ref "TP7")
+        (pin "1")
+        (pintype "PASSIVE"))
+      (node
         (ref "U7")
         (pin "5")
         (pintype "POWER-IN")))
     (net
-      (code 64)
+      (code 68)
       (name "WDT_KICK")
       (class "Default")
       (node

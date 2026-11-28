@@ -89,36 +89,78 @@ def can_nets(nl):
     }
 
 
+def relays(nl, f):
+    """(bypass, termination) relays: two G6K-2F-Y; the bypass one has its pole A
+    COM on cable-side J1.9 (CAN1 ADAS H), the termination one is the other."""
+    ks = nl.find("G6K-2F-Y")
+    if len(ks) != 2:
+        f.append(f"expected two G6K-2F-Y relays (bypass + car-side termination), found {ks}")
+        return None, None
+    by = [k for k in ks if nl.net_of(k, RELAY["COM_A"]) is not None
+          and nl.net_of(k, RELAY["COM_A"]) == nl.net_of("J1", "9")]
+    if len(by) != 1:
+        f.append(f"no single relay has its pole A COM on J1.9 (CAN1 ADAS H): {ks}")
+        return None, None
+    return by[0], next(k for k in ks if k != by[0])
+
+
+def switched_termination(nl, k, f, label):
+    """k's NO contacts each reach exactly one default-open jumper, then a
+    60.4 ohm leg; both legs meet at one split midpoint (4.7 nF to GND)."""
+    gnd = nl.net_of("J1", "1")
+    mids = []
+    for contact in ("NO_A", "NO_B"):
+        net = nl.net_of(k, RELAY[contact])
+        rest = nl.nets[net] - {(k, RELAY[contact])} if net else set()
+        if len(rest) != 1 or not nl.comps[next(iter(rest))[0]]["footprint"].startswith("Jumper:"):
+            f.append(f"{label}: {k} {contact} must reach only a termination jumper, has {sorted(rest)}")
+            continue
+        (jp, p), = rest
+        mids.append(termination_leg(nl, jp, p, net, gnd, f, f"{label} {contact}"))
+    if len(mids) == 2 and (mids[0] is None or mids[0] != mids[1]):
+        f.append(f"{label}: {k} NO_A and NO_B termination legs don't meet at one split midpoint")
+
+
 def check_relay(nl):
-    """NC contacts join ADAS and car side, H to H on pole A, L to L on pole B;
-    NO contacts open; COM on the ADAS side, NC on the car side."""
+    """Bypass relay: NC contacts join ADAS and car side, H to H on pole A, L to L
+    on pole B, COM on the ADAS side, NC on the car side; its NO contacts carry
+    only the ADAS-side termination. Termination relay: COM on the car side, NC
+    open, NO contacts carry only the car-side termination."""
     f = []
-    k = single(nl, "G6K-2F-Y", f, "fail-open relay")
-    if not k:
+    by, term = relays(nl, f)
+    if not by:
         return f
     want = {
-        "COM_A": ("J1", "9"), "NC_A": ("J1", "8"),
-        "COM_B": ("J1", "11"), "NC_B": ("J1", "7"),
+        (by, "COM_A"): ("J1", "9"), (by, "NC_A"): ("J1", "8"),
+        (by, "COM_B"): ("J1", "11"), (by, "NC_B"): ("J1", "7"),
+        (term, "COM_A"): ("J1", "8"), (term, "COM_B"): ("J1", "7"),
     }
-    for contact, (j, p) in want.items():
+    for (k, contact), (j, p) in want.items():
         if nl.net_of(k, RELAY[contact]) is None or nl.net_of(k, RELAY[contact]) != nl.net_of(j, p):
             f.append(f"relay {contact} ({k}.{RELAY[contact]}) not on harness {j}.{p}")
-    for contact in ("NO_A", "NO_B"):
-        if not unconnected(nl, k, RELAY[contact]):
-            f.append(f"relay {contact} ({k}.{RELAY[contact]}) is connected")
+    for contact in ("NC_A", "NC_B"):
+        if not unconnected(nl, term, RELAY[contact]):
+            f.append(f"termination relay {contact} ({term}.{RELAY[contact]}) is connected")
+    switched_termination(nl, by, f, "ADAS-side termination")
+    switched_termination(nl, term, f, "car-side termination")
     if nl.net_of("J1", "9") == nl.net_of("J1", "8") or nl.net_of("J1", "11") == nl.net_of("J1", "7"):
         f.append("ADAS-side and car-side CAN1 are hard-wired together (bypasses the relay)")
     return f
 
 
 def check_can_lines(nl):
-    """Each CAN line holds exactly: its harness pins, one transceiver pin,
-    one ESD line pin, one termination jumper, and the relay contact for CAN1;
-    termination is jumper -> 60.4R -> mid -> 60.4R -> jumper, mid -> 4.7nF -> GND,
-    jumper default open. Nothing else, so no other path to power or ground."""
+    """Each CAN line holds exactly: its harness pins, one transceiver pin, one
+    ESD line pin, and on CAN1 its relay contacts (bypass COM or NC, termination
+    relay COM), on V-CAN one termination jumper. Termination is jumper -> 60.4R
+    -> mid -> 60.4R -> jumper, mid -> 4.7nF -> GND, jumper default open. Nothing
+    else, so no other path to power or ground; CAN1's terminations sit behind
+    relay NO contacts (check_relay, check_failsafe_termination)."""
     f = []
-    k = (nl.find("G6K-2F-Y") or [None])[0]
-    relay_pins = {"CAN1_ADAS": ("COM_A", "COM_B"), "CAN1_CAR": ("NC_A", "NC_B")}
+    by, term = relays(nl, [])  # check_relay reports a missing or unidentifiable relay
+    relay_pins = {  # role -> (H, L) relay contacts allowed on the line
+        "CAN1_ADAS": ({(by, RELAY["COM_A"])}, {(by, RELAY["COM_B"])}),
+        "CAN1_CAR": ({(by, RELAY["NC_A"]), (term, RELAY["COM_A"])}, {(by, RELAY["NC_B"]), (term, RELAY["COM_B"])}),
+    }
     harness = {"CAN1_ADAS": (("9",), ("11",)), "CAN1_CAR": (("8",), ("7",)), "VCAN_ADAS": (("16",), ("18",))}
     gnd = nl.net_of("J1", "1")
     for role, (h, l) in can_nets(nl).items():
@@ -137,7 +179,7 @@ def check_can_lines(nl):
                 mpn = nl.comps[r]["fields"].get("MPN", "")
                 if (r, p) in want_conn:
                     continue
-                if r == k and role in relay_pins and p == RELAY[relay_pins[role][idx]]:
+                if by and role in relay_pins and (r, p) in relay_pins[role][idx]:
                     continue
                 if mpn.startswith("TJA1042") and p == TJA["CANH" if side == "H" else "CANL"]:
                     xcvr.add(r)
@@ -153,17 +195,22 @@ def check_can_lines(nl):
                     f.append(f"{role}_{side} ({net}): unexpected {r}.{p} ({mpn or fp})")
             if conn_pins(nl.nets[net]) != want_conn:
                 f.append(f"{role}_{side}: harness pins {sorted(conn_pins(nl.nets[net]))}, expected {sorted(want_conn)}")
-            if (seen_x, seen_e, seen_j) != (1, 1, 1):
-                f.append(f"{role}_{side}: {seen_x} transceiver, {seen_e} ESD, {seen_j} termination jumper pins (want 1 each)")
+            # CAN1 termination hangs off relay NO contacts (check_relay), never on the line itself
+            want_j = 0 if role in relay_pins else 1
+            if (seen_x, seen_e, seen_j) != (1, 1, want_j):
+                f.append(f"{role}_{side}: {seen_x} transceiver, {seen_e} ESD, {seen_j} termination jumper pins "
+                         f"(want 1, 1, {want_j})")
         if len(xcvr) != 1 or len(esd) != 1:
             f.append(f"{role}: H and L go to different transceivers {sorted(xcvr)} / ESD parts {sorted(esd)}")
         if len(mids) == 2 and (mids[0] is None or mids[0] != mids[1]):
             f.append(f"{role}: H and L termination legs don't meet at one split midpoint")
-    if k:
-        for contact in ("COM_A", "NC_A", "COM_B", "NC_B"):
-            net = nl.net_of(k, RELAY[contact])
-            if net not in {n for pair in can_nets(nl).values() for n in pair}:
-                f.append(f"relay {contact} on non-CAN net {net}")
+    if by:
+        can = {n for pair in can_nets(nl).values() for n in pair}
+        for k, contacts in ((by, ("COM_A", "NC_A", "COM_B", "NC_B")), (term, ("COM_A", "COM_B"))):
+            for contact in contacts:
+                net = nl.net_of(k, RELAY[contact])
+                if net not in can:
+                    f.append(f"relay {k} {contact} on non-CAN net {net}")
     return f
 
 
@@ -208,7 +255,10 @@ def check_coil_driver(nl):
     watchdog RESET, with a pull-down; PB12 has a pull-down; the watchdog
     RESET is open drain and is also the MCU's NRST."""
     f = []
-    k = single(nl, "G6K-2F-Y", f, "relay")
+    ks = nl.find("G6K-2F-Y")
+    if not ks:
+        f.append("no G6K-2F-Y relay")
+    k = ks[0] if ks else None
     q = single(nl, "AO3400A", f, "coil FET")
     g = single(nl, "SN74LVC1G08", f, "AND gate")
     w = single(nl, "TPS3828-33", f, "open-drain watchdog")
@@ -217,11 +267,14 @@ def check_coil_driver(nl):
         return f
     gnd, v33 = nl.net_of("J1", "1"), nl.net_of(u, "19")
     plus, minus = nl.net_of(k, RELAY["COIL+"]), nl.net_of(k, RELAY["COIL-"])
+    for other in ks[1:]:  # every relay's coil in parallel: one driver, one flyback diode
+        if nl.net_of(other, RELAY["COIL+"]) != plus or nl.net_of(other, RELAY["COIL-"]) != minus:
+            f.append(f"{other} coil is not in parallel with {k}'s")
     diodes = {r for r, c in nl.comps.items() if c["footprint"].startswith("Diode_SMD:")}
     fly = [r for r in diodes if nl.net_of(r, DIODE["K"]) == plus and nl.net_of(r, DIODE["A"]) == minus]
     if not fly:
         f.append("relay coil has no flyback diode (K on coil+, A on coil-)")
-    if minus is None or nl.nets[minus] - {(k, RELAY["COIL-"]), (q, FET["D"])} - {(d, DIODE["A"]) for d in fly}:
+    if minus is None or nl.nets[minus] - {(r, RELAY["COIL-"]) for r in ks} - {(q, FET["D"])} - {(d, DIODE["A"]) for d in fly}:
         f.append(f"coil- net holds more than coil, FET drain and flyback diode: {sorted(nl.nets.get(minus, []))}")
     if nl.net_of(q, FET["D"]) != minus or nl.net_of(q, FET["S"]) != gnd:
         f.append("coil FET is not low-side (drain on coil-, source on GND)")
@@ -282,15 +335,68 @@ def check_usb_isolation(nl):
     """USB VBUS can't power the relay coil: a board on USB alone stays in
     passthrough (SPEC.md "USB")."""
     f = []
-    k = single(nl, "G6K-2F-Y", f, "relay")
+    ks = nl.find("G6K-2F-Y")
     usb = single(nl, "TYPE-C-31-M-12", f, "USB-C receptacle")
-    if not (k and usb):
-        return f
-    vbus = nl.net_of(usb, "A4")
-    if nl.net_of(k, RELAY["COIL+"]) in reach(nl, vbus):
-        f.append("relay coil supply is reachable from USB VBUS")
-    if nl.net_of(k, RELAY["COIL+"]) not in reach(nl, nl.net_of("J1", "2")):
-        f.append("relay coil supply is not derived from IGN")
+    if not (ks and usb):
+        return f + ([] if ks else ["no G6K-2F-Y relay"])
+    from_vbus, from_ign = reach(nl, nl.net_of(usb, "A4")), reach(nl, nl.net_of("J1", "2"))
+    for k in ks:
+        if nl.net_of(k, RELAY["COIL+"]) in from_vbus:
+            f.append(f"{k} coil supply is reachable from USB VBUS")
+        if nl.net_of(k, RELAY["COIL+"]) not in from_ign:
+            f.append(f"{k} coil supply is not derived from IGN")
+    return f
+
+
+def contact_groups(nl, energized):
+    """Nets joined by every G6K's contacts (COM to NO if energized, else to NC)
+    and by every solder jumper taken as closed: net -> group id."""
+    parent = {n: n for n in nl.nets}
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def join(a, b):
+        if a and b:
+            parent[find(a)] = find(b)
+
+    for k in nl.find("G6K-2F-Y"):
+        for pole in ("A", "B"):
+            join(nl.net_of(k, RELAY["COM_" + pole]), nl.net_of(k, RELAY[("NO_" if energized else "NC_") + pole]))
+    for r, c in nl.comps.items():
+        if c["footprint"].startswith("Jumper:"):
+            join(nl.net_of(r, "1"), nl.net_of(r, "2"))
+    return {n: find(n) for n in nl.nets}
+
+
+def check_failsafe_termination(nl):
+    """Relays de-energized (unpowered, reset, watchdog tripped): no resistor or
+    capacitor reaches Chassis CAN1 through relay contacts or solder jumpers, even
+    with every jumper closed, so the joined bus is exactly the car's.
+    Energized: each CAN1 half reaches its own 60.4 ohm termination legs."""
+    f = []
+    lines = {"ADAS_H": ("J1", "9"), "ADAS_L": ("J1", "11"), "CAR_H": ("J1", "8"), "CAR_L": ("J1", "7")}
+    for energized in (False, True):
+        group = contact_groups(nl, energized)
+        state = "energized" if energized else "de-energized"
+        found = {}
+        for name, (j, p) in lines.items():
+            net = nl.net_of(j, p)
+            if net is None:
+                f.append(f"CAN1 {name} (J1.{p}) unconnected")
+                continue
+            nets = {n for n, g in group.items() if g == group[net]}
+            found[name] = {(r, rp) for n in nets for r, rp in nl.nets[n]
+                           if nl.comps[r]["footprint"].startswith(("Resistor_SMD:", "Capacitor_SMD:"))}
+            if not energized and found[name]:
+                f.append(f"relays {state}: CAN1 {name} reaches {sorted(found[name])} (termination on the stock bus)")
+            if energized and not any(nl.comps[r]["value"] == "60.4" for r, _ in found[name]):
+                f.append(f"relays {state}: CAN1 {name} reaches no 60.4 ohm termination leg")
+        if energized and found.get("ADAS_H") and found.get("ADAS_H") == found.get("CAR_H"):
+            f.append(f"relays {state}: ADAS and car side share one termination")
     return f
 
 
@@ -339,7 +445,7 @@ def check_mcu_pins(nl):
 
 
 CHECKS = [check_passthrough, check_box_side, check_relay, check_can_lines,
-          check_coil_driver, check_usb_isolation, check_mcu_pins]
+          check_failsafe_termination, check_coil_driver, check_usb_isolation, check_mcu_pins]
 
 
 def run(nl):

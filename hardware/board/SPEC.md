@@ -16,7 +16,8 @@ car-harness cable ──18-pin──▶ [ leaf-gw board ] ──18-pin──▶ 
 
 1. **Unpowered, reset or crashed = stock.** With no power, a held reset, a hung
    firmware or a tripped watchdog, Chassis CAN's two halves are joined by relay
-   contacts and every other pin passes straight through. The car and the comma
+   contacts, no termination is switched onto them, and every other pin passes
+   straight through. The car and the comma
    behave exactly as if the board weren't there.
 2. **Firmware compatible.** Same MCU and the same pins as the RetroPilot Ocelot
    gateway (`firmware/boards/gateway.h`), so `backends/panda/gw_panda.c` runs
@@ -65,6 +66,19 @@ assumes the Ocelot's 16 MHz; our board image sets its own PLL, `backends/panda/b
 BOOT0 with a pull-down and a test pad / button for ROM DFU, NRST with a pad,
 SWD pads (SWDIO, SWCLK, NRST, 3V3, GND).
 
+NRST has a 10 kΩ pull-up and 10 nF to GND, not the usual 100 nF: the MCU's own
+resets drive NRST low for only 20 µs (DS11581 table 61), and NRST must get
+below VIL in that time (figure 37, note 2) for those resets to reach the
+watchdog line and drop the relay. NRST's rising edge is an RC edge (about
+0.1 ms), far slower than the AND gate's 10 ns/V input limit; that is harmless
+because the gate's other input, PB12, is held low by its pull-down while the
+MCU is in reset, so the output stays low through the slow edge. Its falling
+edges (watchdog, MCU reset) are fast.
+
+STM32F413RGT6 is the "6" temperature range: 85 °C ambient at full power, 105 °C
+at low power (DS11581 table 16). JLCPCB stocks no RG in range 7 (105 °C) or 3
+(125 °C).
+
 Pins, matching the Ocelot gateway:
 
 | function | pin |
@@ -87,15 +101,46 @@ unpowered board doesn't load either bus. Each port:
 - split termination (2 × 60.4 Ω + 4.7 nF to GND), enabled by a solder jumper,
   default **open**. Whether a segment needs it is measured on the car
   (`HARDWARE.md`, termination step).
+- On the two Chassis CAN ports the termination is also switched by relay
+  contacts: the ADAS-side network hangs off K1's NO contacts and the car-side
+  one off K2's (see "Fail-open relay"). Jumper closed and relay energized =
+  terminated; relay released = no termination on the joined bus, whatever the
+  jumpers say. Each half of the split bus then gets its own end point only
+  while the gateway sits in between.
+- The V-CAN port taps a bus that the car and the box already terminate, so it
+  stays a plain jumper on the line with no relay: a tap in the middle of a bus
+  never needs a terminator, and closing JP5 / JP6 there would load V-CAN to
+  about 40 Ω. Leave them open unless the car measurement says otherwise.
 - CAN ESD diode array (e.g. PESD2CAN class) at the connector side.
 - 120 Ω differential routing.
 
 ### Fail-open relay
 
-Omron G6K-2F-Y DC5 (DPDT signal relay, 5 V coil; rated to +70 °C, which
-matters for where the board is mounted). Each pole's **NC** contact joins the ADAS-side and car-side CAN1 line
-(H to H, L to L). Energized, the bypass opens and only the gateway connects the
-two halves.
+K1, an Omron G6K-2F-Y DC5 (DPDT signal relay, 5 V coil). Each pole's **NC**
+contact joins the ADAS-side and car-side CAN1 line (H to H, L to L). Energized,
+the bypass opens and only the gateway connects the two halves. Its **NO**
+contacts (pole A pad 14 / pin 4, pole B pad 24 / pin 5) carry the ADAS-side
+split termination, so energizing also terminates the ADAS-side segment (if its
+jumpers are closed).
+
+K2, a second G6K-2F-Y DC5, switches the car-side split termination: COM on
+CAN1_CAR_H / L, NO to the termination jumpers, NC unused. Its coil is in
+parallel with K1's (same +5V_IGN and RELAY_COIL_LO), so one driver and one
+flyback diode serve both: 2 × 21.1 mA at 5 V (en-g6k.pdf p.3), well inside the
+AO3400A's and the 1N4148W's ratings.
+
+Pin map (en-g6k.pdf p.6, top view; KiCad pad names in brackets): 1 coil+ [A1],
+2 NC A [12], 3 COM A [11], 4 NO A [14], 5 NO B [24], 6 COM B [21], 7 NC B [22],
+8 coil− [A2].
+
+Every G6K, including the -TR and Y variants, is rated −40 to +70 °C ambient
+(en-g6k.pdf p.3); the G6KU is a latching relay and can't fail open. There is no
+85 °C relay in this footprint at JLCPCB, so the board keeps the G6K and this
+operating envelope: **rated to +70 °C ambient** (the relays), with the MCU and
+the watchdog rated to 85 °C. Behind a windshield in summer the cabin exceeds
+that; the board is not certified for it. Hot parts that misbehave fail toward
+stock: a relay that drops out joins the bus and drops both terminations, a
+watchdog or MCU that stops releases both relays.
 
 The coil is driven by a low-side N-MOSFET with a flyback diode, and it is
 energized only when **both** of these hold:
@@ -120,15 +165,32 @@ stop forwarding first, then release the relay.
 
 ### Power
 
-From IGN (harness pins 2 / 14), about 150 mA at most including the relay coil:
+From IGN (harness pins 2 / 14), under 200 mA at 12 V in the worst case (both
+relay coils, all three transceivers dominant):
 
-- reverse-polarity protection (series Schottky or P-FET),
-- load-dump / transient TVS for a 12 V vehicle system,
-- input fuse (PTC or a fusible 0 Ω),
-- wide-input buck converter → 5.16 V (so the 5 V rail stays in the TJA1042's
-  4.5–5.5 V range after the USB OR diode; the relay coil is rated to 150 %),
-- LDO 5 V → 3.3 V (MCU, VIO, watchdog),
-- a power-good LED.
+- input fuse: PTC, mSMD050-60V (1812, 60 V, 0.5 A hold / 1 A trip at 25 °C),
+- load-dump / transient TVS: SMBJ33A, unidirectional, after the fuse (reverse
+  battery conducts it and trips the PTC). 33 V standoff clears a 24 V jump
+  start and the ISO 16750-2 test 5b suppressed load dump (about 35 V); its
+  53.3 V clamp stays under the buck's 65 V VIN / 60 V SHDN maximum,
+- reverse-polarity protection: series SS210 Schottky,
+- wide-input buck converter: LMR16006Y at 2.1 MHz (above the AM band), 6.8 µH
+  (Isat 2.75 A, above the 1.6 A the datasheet asks for so current limit comes
+  before saturation), 2 × 22 µF out, 2 × 2.2 µF 50 V X7R in. 28k / 4.7k on the
+  0.765 V reference: 5.32 V typical, 5.11–5.54 V over VFB and 1 % resistors.
+  +5V_SYS, one B5819W drop lower, stays in the TJA1042's 4.5–5.5 V range; the
+  relay coils run from +5V_IGN (150 % of 5 V max). At 2.1 MHz the 80 ns
+  minimum on-time limits regulation to inputs below about 28 V (5.3 V /
+  (80 ns × 2.4 MHz)), so a jump start still regulates and a load-dump pulse
+  above that makes the buck skip pulses,
+- LDO 5 V → 3.3 V: MCP1700T-3302E/TT (−40 to +125 °C, 250 mA) for the MCU, VIO
+  and the watchdog,
+- ignition sense: 100k / 22k from VIN_PROT to PA1 with 100 nF and a clamp diode
+  to 3V3. 12 V reads 2.16 V; 3.3 V full scale is 18.3 V at VIN_PROT. Firmware
+  conversion: VIN_PROT mV = raw × 3300 × 122 / (4095 × 22),
+- a power-good LED,
+- test pads by the buck: VIN_PROT (TP7), +5V_IGN (TP8), +5V_SYS (TP9) and GND
+  (TP10), bare copper like the SWD pads.
 
 ### USB
 
@@ -145,6 +207,8 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
   USB pairs.
 - CAN pairs as 120 Ω differential pairs; USB D+/D− as 90 Ω.
 - 12 V input traces at least 0.5 mm; relay and power pins with thermal relief.
+- K2 (the car-side termination relay) and the four power test pads (TP7–TP10,
+  by the buck) came with the pre-order review; F1 went from 1206 to 1812.
 - Pass-throughs scripted, not autorouted: every non-CAN pass-through runs on
   B.Cu in pin order, so none crosses another; the 12 V pins reach J2 on a short
   In2 hop between J2's holes (its other pads have no inner rings), and IGN
@@ -204,6 +268,13 @@ all pass before any order:
    - box-side pins 9 / 11 connect to nothing;
    - each relay NC contact joins the right ADAS-side and car-side line, and the
      relay common and NC nets are exactly as in the table above;
+   - K1's NO contacts reach only the ADAS-side termination, through its
+     jumpers; K2's COM sits on the car-side CAN1 lines, its NC is open and its
+     NO contacts reach only the car-side termination; K2's coil is parallel
+     to K1's;
+   - fail-safe termination: with both relays de-energized and every jumper
+     taken as closed, no resistor or capacitor reaches a CAN1 line; energized,
+     each half reaches its own termination;
    - the coil driver's gate has a pull-down and is driven through the AND of
      relay enable and the watchdog output;
    - no CAN line connects to power or ground except through termination parts
@@ -219,7 +290,10 @@ all pass before any order:
 
 1. Spec (this file).
 2. Schematic as code (SKiDL → KiCad netlist), BOM with LCSC numbers, ERC and
-   safety-net checks in CI.
+   safety-net checks in CI. Revised after the pre-order review (2026-11-27):
+   TVS, PTC, buck frequency and feedback, LDO, ignition divider, NRST cap,
+   relay-switched CAN1 terminations with a second relay, power test pads. The
+   layout (phase 3) has to follow the new netlist before an order.
 3. Layout: placement by script, routing with freerouting, DRC, parity and layout
    checks in CI.
 4. Fab outputs, a first order of about 5 assembled boards.

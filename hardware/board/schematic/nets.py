@@ -32,6 +32,8 @@ def make():
         "CAN1_STB", "CAN2_STB", "CAN3_STB", "WDT_KICK", "LED_STATUS", "LED_STATUS_A",
         # relay + gating
         "RELAY_EN", "RELAY_GATE", "RELAY_COIL_LO",
+        # relay NO contacts -> switched CAN1 termination (K1 ADAS side, K2 car side)
+        "K1_NO_A", "K1_NO_B", "K2_NO_A", "K2_NO_B",
         # USB
         "USB_DP", "USB_DM", "USB_CC1", "USB_CC2",
     ]

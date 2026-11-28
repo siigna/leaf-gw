@@ -61,7 +61,7 @@ def write_bom(out):
             w.writerow(r[:4])
     with open(os.path.join(out, "parts.csv"), "w", newline="") as f:
         w = csv.writer(f, lineterminator="\n")
-        w.writerow(["Designator", "Qty", "Value", "Manufacturer", "MPN", "LCSC", "JLC", "Stock 2026-11-26", "Footprint"])
+        w.writerow(["Designator", "Qty", "Value", "Manufacturer", "MPN", "LCSC", "JLC", "Stock 2026-11-27", "Footprint"])
         by_lcsc = {d.lcsc: d for d in PARTS.values()}
         for mpn, refs, fp, lcsc, p, rl in rows:
             d = by_lcsc[lcsc]

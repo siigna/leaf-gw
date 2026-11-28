@@ -6,6 +6,11 @@ energized only while RELAY_EN (PB12) is high AND the watchdog's RESET output
 (on NRST) is high. Omron G6K-2F-Y terminals (en-g6k.pdf p.6): 1 coil+, 8 coil-,
 3/6 COM, 2/7 NC, 4/5 NO; KiCad's symbol/footprint call them A1, A2, 11/21,
 12/22, 14/24.
+
+The NO contacts switch the CAN1 split terminations (can.py): K1's put the
+ADAS-side termination on CAN1_ADAS, and K2, a second G6K-2F-Y with its coil in
+parallel with K1's, puts the car-side one on CAN1_CAR. De-energized, both
+terminations hang off open contacts and the joined bus sees neither.
 """
 
 from nets import nc
@@ -18,10 +23,22 @@ def build(n):
     k["12"] += n.CAN1_CAR_H   # pole A NC  (pin 2)
     k["21"] += n.CAN1_ADAS_L  # pole B COM (pin 6)
     k["22"] += n.CAN1_CAR_L   # pole B NC  (pin 7)
-    nc(k["14"], "relay NO, pole A: energized = bypass open, nothing to connect")
-    nc(k["24"], "relay NO, pole B: energized = bypass open, nothing to connect")
+    k["14"] += n.K1_NO_A      # pole A NO (pin 4): ADAS-side termination, H leg
+    k["24"] += n.K1_NO_B      # pole B NO (pin 5): ADAS-side termination, L leg
     k["A1"] += n.P5V_IGN       # coil+ only from IGN, so USB power alone stays in passthrough
     k["A2"] += n.RELAY_COIL_LO
+
+    # K2: car-side termination switch, coil in parallel with K1 (one driver,
+    # one flyback diode: 2 x 21.1 mA, en-g6k.pdf p.3)
+    k2 = part("RELAY", ref="K2")
+    k2["11"] += n.CAN1_CAR_H  # pole A COM
+    k2["14"] += n.K2_NO_A     # pole A NO: car-side termination, H leg
+    k2["21"] += n.CAN1_CAR_L  # pole B COM
+    k2["24"] += n.K2_NO_B     # pole B NO: car-side termination, L leg
+    nc(k2["12"], "K2 NC, pole A: de-energized = no car-side termination")
+    nc(k2["22"], "K2 NC, pole B: de-energized = no car-side termination")
+    k2["A1"] += n.P5V_IGN
+    k2["A2"] += n.RELAY_COIL_LO
 
     flyback = part("D_1N4148W")
     flyback["K"] += n.P5V_IGN

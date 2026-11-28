@@ -57,11 +57,13 @@ def build(n):
     cap("C_30p", n.HSE_IN, n.GND)
     cap("C_30p", n.HSE_OUT, n.GND)
 
-    # reset: 10k pull-up (the watchdog output is open drain), 100 nF
+    # reset: 10k pull-up (the watchdog output is open drain), 10 nF: small enough that
+    # the MCU's own 20 us reset pulse pulls NRST below VIL (DS11581 fig. 37 note 2),
+    # so its internal resets also reach the relay's AND gate
     r = part("R_10k")
     r[1] += n.P3V3
     r[2] += n.NRST
-    cap("C_100n", n.NRST, n.GND)
+    cap("C_10n", n.NRST, n.GND)
 
     # boot: BOOT0 pulled down, button to 3V3 for ROM DFU; BOOT1 (PB2) low
     for net in (n.BOOT0, n.BOOT1):

@@ -103,23 +103,84 @@ class Mutations(unittest.TestCase):
 
     def test_termination_jumper_closed(self):
         def m(nl):
-            jp = next(r for r, _ in nl.nodes("J1", "9") if nl.comps[r]["footprint"].startswith("Jumper:"))
+            jp = next(r for r, _ in nl.nodes("J1", "16") if nl.comps[r]["footprint"].startswith("Jumper:"))
             nl.comps[jp]["footprint"] = "Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm"
         self.bites(safety.check_can_lines, m)
 
+    def test_switched_termination_jumper_closed(self):
+        def m(nl):
+            jp = next(r for r, _ in nl.nets["K1_NO_A"] if nl.comps[r]["footprint"].startswith("Jumper:"))
+            nl.comps[jp]["footprint"] = "Jumper:SolderJumper-2_P1.3mm_Bridged_RoundedPad1.0x1.5mm"
+        self.bites(safety.check_relay, m)
+
     def test_termination_cap_to_power(self):
         def m(nl):
-            c = next(r for r, _ in nl.nets["TERM2_MID"] if r.startswith("C"))
+            c = next(r for r, _ in nl.nets["TERM3_MID"] if r.startswith("C"))
             nl.move(c, "2", "+3V3")
         self.bites(safety.check_can_lines, m)
 
+    def test_switched_termination_cap_to_power(self):
+        def m(nl):
+            c = next(r for r, _ in nl.nets["TERM2_MID"] if r.startswith("C"))
+            nl.move(c, "2", "+3V3")
+        self.bites(safety.check_relay, m)
+
     def test_termination_missing_jumper(self):
         def m(nl):
-            jp = next(r for r, _ in nl.nodes("J1", "7") if nl.comps[r]["footprint"].startswith("Jumper:"))
+            jp = next(r for r, _ in nl.nets["K2_NO_B"] if nl.comps[r]["footprint"].startswith("Jumper:"))
             nl.move(jp, "1", None)
             nl.move(jp, "2", None)
-            nl.move(next(r for r, _ in nl.nets["TERM2_L"] if r.startswith("R")), "2", nl.net_of("J1", "7"))
+            nl.move(next(r for r, _ in nl.nets["TERM2_L"] if r.startswith("R")), "2", "K2_NO_B")
+        self.bites(safety.check_relay, m)
+
+    # fail-safe termination: relay-switched, nothing on the bus when de-energized
+    def test_adas_termination_unswitched(self):
+        def m(nl):
+            jp = next(r for r, p in nl.nets["K1_NO_A"] if r.startswith("JP"))
+            nl.move(jp, "1", nl.net_of("J1", "9"))
+        self.bites(safety.check_failsafe_termination, m)
         self.bites(safety.check_can_lines, m)
+
+    def test_car_termination_unswitched(self):
+        def m(nl):
+            jp = next(r for r, p in nl.nets["K2_NO_B"] if r.startswith("JP"))
+            nl.move(jp, "1", nl.net_of("J1", "7"))
+        self.bites(safety.check_failsafe_termination, m)
+
+    def test_adas_termination_on_k1_nc(self):
+        def m(nl):  # K1 pole A NC and NO swapped: termination on the bus when unpowered
+            nc, no = nl.net_of("K1", "12"), nl.net_of("K1", "14")
+            nl.move("K1", "12", no)
+            nl.move("K1", "14", nc)
+        self.bites(safety.check_failsafe_termination, m)
+
+    def test_car_termination_on_k2_nc(self):
+        def m(nl):
+            no = nl.net_of("K2", "24")
+            nl.move("K2", "24", None)
+            nl.move("K2", "22", no)
+        self.bites(safety.check_failsafe_termination, m)
+        self.bites(safety.check_relay, m)
+
+    def test_car_termination_not_switched_in(self):
+        self.bites(safety.check_failsafe_termination, lambda nl: nl.move("K2", "14", None))
+
+    def test_k1_no_extra_load(self):
+        self.bites(safety.check_relay, lambda nl: nl.add_part(
+            "R99", "Resistor_SMD:R_0603_1608Metric", "X", {"1": "K1_NO_A", "2": nl.net_of("J1", "1")}))
+
+    def test_termination_relay_missing(self):
+        def m(nl):
+            for p in list(nl.pins_of("K2")):
+                nl.move("K2", p, None)
+            del nl.comps["K2"]
+        self.bites(safety.check_relay, m)
+
+    def test_k2_coil_not_parallel(self):
+        self.bites(safety.check_coil_driver, lambda nl: nl.move("K2", "A2", "K2_COIL_LO"))
+
+    def test_k2_coil_on_usb_rail(self):
+        self.bites(safety.check_usb_isolation, lambda nl: nl.move("K2", "A1", "+5V_SYS"))
 
     def test_transceiver_on_wrong_pair(self):
         def m(nl):

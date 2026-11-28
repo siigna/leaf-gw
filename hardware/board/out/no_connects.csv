@@ -3,8 +3,8 @@ J2,9,Pin_9,box side CAN1 ADAS pair: joining it would short around the gateway (S
 J2,11,Pin_11,box side CAN1 ADAS pair: joining it would short around the gateway (SPEC.md)
 J3,A8,SBU1,SBU unused (USB 2.0 only)
 J3,B8,SBU2,SBU unused (USB 2.0 only)
-K1,14,14,"relay NO, pole A: energized = bypass open, nothing to connect"
-K1,24,24,"relay NO, pole B: energized = bypass open, nothing to connect"
+K2,12,12,"K2 NC, pole A: de-energized = no car-side termination"
+K2,22,22,"K2 NC, pole B: de-energized = no car-side termination"
 U1,3,PC14,spare GPIO
 U1,4,PC15,spare GPIO
 U1,8,PC0,spare GPIO
