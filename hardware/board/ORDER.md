@@ -31,6 +31,7 @@ upload.
 | PCB qty | 5 | the first batch: bring-up and spares |
 | Thickness | 1.6 mm | |
 | Specify stackup (impedance) | **yes: JLC04161H-7628** | the CAN (120 Ω) and USB (90 Ω) pair geometry is calculated for this stackup (`layout/impedance.py`); "no" leaves the stackup to JLC |
+| Impedance control | no requirement | with the stackup fixed, the drawn widths give the impedance; a ±10% guarantee is extra cost and coupon testing that CAN at 500 kbit/s and full-speed USB don't need |
 | Specify layer sequence | no | the Gerbers name each layer |
 | Solder mask colour | purple | the colour previews are in `out/render/colors/` |
 | Silkscreen | white | |
