@@ -105,11 +105,15 @@ The board reaches the stock harness box through J2 and a short cable. This
 cable is not sold.
 
 - 2 × Molex **501646-1800** receptacle housing (iGrid, 18 circuits).
-- 16 × Molex **501647-1000** crimp terminals (AWG 22–26), plus spares.
+- 32 × Molex **501647-1000** crimp terminals (AWG 22–26): 16 per housing, plus spares.
 - AWG 24–26 stranded wire. Twist the CAN pairs: 4/6, 16/18 and 8/7.
 - Crimp tool: Molex's hand tool for 501647 is 578021-5300. A generic
   open-barrel crimper for 2.0 mm terminals (Engineer PA-09 class) also
   works, with care.
+- Find cavity n by the numbers molded on the housing. Looking at the wire
+  side with the latch up, cavity 1 is bottom-right and cavity 2 top-right
+  (as in comma's `Nissan_A_Harness.pdf`); odd numbers run along the bottom
+  row, even along the top.
 - Wire pin n to pin n. **Leave positions 9 and 11 empty at both ends.** The
   box would otherwise join the ADAS-side and car-side Chassis CAN halves
   around the gateway (`SPEC.md`, "The 18-pin connector").
@@ -119,6 +123,12 @@ cable is not sold.
   - every pin n reaches pin n;
   - no two pins touch;
   - 9 and 11 are open.
+- On the board, with both cables plugged in and the board unpowered:
+  J1.9 to J1.8 and J1.11 to J1.7 read continuous through the relay's NC
+  contacts (that is the fail-safe bypass).
+- Don't swap the cables. The car-harness cable goes into J1 (CAR HARNESS),
+  this cable into J2 (TO BOX). Swapped, the cable's pins 9/11 land on J2's
+  empty pads and the ADAS unit loses Chassis CAN even with the board off.
 
 ## The case
 
