@@ -85,6 +85,16 @@ The Nissan A harness has no 12 V wire; power the gateway from IGN.
    120 Ω ends: measure each half, and enable the Ocelot's 120 Ω on whichever
    gateway port lacks one so each segment reads ~60 Ω again. The harness box's
    loopback jumpers (pins 3–5, 13–15) only cover bus 0 and bus 2.
+
+   On the leaf-gw board this termination is switched with the bypass: the
+   ADAS-side network sits on K1's normally-open contacts and the car-side one
+   on K2's, so closing JP1/JP2 or JP3/JP4 adds a terminator only while the
+   relays are energized and the bus is split. De-energized (power off, reset,
+   watchdog), the rejoined bus sees only the car's own terminators, as stock.
+   On a plain Ocelot build there is no such switch: a terminator you enable
+   stays on the rejoined bus when the bypass relay drops, so the fail-safe
+   bus reads ~40 Ω instead of ~60 Ω. Never close the V-CAN tap's JP5/JP6: that
+   bus is already terminated by the car and the harness box.
 7. Twisted pair throughout, short stubs, heat-shrink and strain relief.
 
 ### Before cutting
