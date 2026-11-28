@@ -57,6 +57,9 @@ CORRECTIONS = [
 # LCSC part -> the same, for parts whose JLC library footprint doesn't follow
 # its package's rule above; checked first.
 PART_CORRECTIONS = {
+    "C290195": (270, (0, 0), "LMR16006YDDCR: JLC's library footprint is drawn like C7519's, turned 90 degrees from "
+                "the LMR16006X's (C87080); at 180 JLC's preview showed its leads across our pad columns, pin 1 "
+                "top-right (2026-11-28), the same as U9 before its fix. 270 puts its pin 1 on our pad 1"),
     "C7519": (270, (0, 0), "USBLC6-2SC6: JLC's library footprint is turned 90 degrees from the LMR16006's on the "
               "same SOT-23-6; at 180 JLC's preview showed its leads across our pad columns, pin 1 top-right "
               "(2026-11-27). 270 puts its pin 1 on our pad 1"),
