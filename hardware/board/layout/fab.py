@@ -38,18 +38,28 @@ CORRECTIONS = [
     (r"^SOIC-8_", 270, (0, 0),
      "matthewlai/JLCKicadTools cpl_rotations_db.csv '^SOIC-' 270; kicad-jlcpcb-tools jlcfootprint README: "
      "SOIC-8 -BL needs 270 (JLC preview)"),
-    (r"^LQFP-", 270, (0, 0), "matthewlai/JLCKicadTools cpl_rotations_db.csv '^LQFP-' 270; verify"),
+    (r"^LQFP-", 270, (0, 0), "matthewlai/JLCKicadTools cpl_rotations_db.csv '^LQFP-' 270; "
+     "confirmed for U1 (C468260) in JLC's placement preview, 2026-11-27"),
     (r"^SOT-23-6", 180, (0, 0),
-     "kicad-jlcpcb-tools jlcfootprint README / truth.csv: SOT-23 family 180 (JLC preview); verify"),
+     "kicad-jlcpcb-tools jlcfootprint README / truth.csv: SOT-23 family 180 (JLC preview); "
+     "confirmed for U7 (C87080) in JLC's placement preview, 2026-11-27; C7519 differs (PART_CORRECTIONS)"),
     (r"^SOT-23-5", 180, (0, 0), "kicad-jlcpcb-tools truth.csv: SOT-23-5 LMV321 at 0 -> 180 (JLC preview)"),
     (r"^SOT-23", 180, (0, 0), "kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)"),
     (r"^USB_C_Receptacle_HRO_TYPE-C-31-M-12", 0, (0, -1.571),
      "kicad-jlcpcb-tools truth.csv: C165948 at 0 -> 0, origin dy -1.571 mm (resolver on EasyEDA footprint)"),
-    (r"^Relay_DPDT_Omron_G6K-2F-Y", 270, (0, 0), "matthewlai/JLCKicadTools cpl_rotations_db.csv 270; verify"),
+    (r"^Relay_DPDT_Omron_G6K-2F-Y", 270, (0, 0), "matthewlai/JLCKicadTools cpl_rotations_db.csv 270; "
+     "confirmed for K1 (C2982926) in JLC's placement preview, 2026-11-27"),
     (r"^Molex_iGrid_501645-1820", 0, (0, 0),
      "project footprint drawn from the EasyEDA footprint of C504976 in its own orientation; verify origin"),
     (r".", 0, (0, 0), "two-terminal or symmetric part, no correction; check polarity marks in the preview"),
 ]
+# LCSC part -> the same, for parts whose JLC library footprint doesn't follow
+# its package's rule above; checked first.
+PART_CORRECTIONS = {
+    "C7519": (270, (0, 0), "USBLC6-2SC6: JLC's library footprint is turned 90 degrees from the LMR16006's on the "
+              "same SOT-23-6; at 180 JLC's preview showed its leads across our pad columns, pin 1 top-right "
+              "(2026-11-27). 270 puts its pin 1 on our pad 1"),
+}
 SOURCES = {
     "matthewlai/JLCKicadTools": "github.com/matthewlai/JLCKicadTools @ 500a9ff",
     "kicad-jlcpcb-tools": "github.com/Bouni/kicad-jlcpcb-tools @ 6f44644 (flake input jlctools)",
@@ -66,7 +76,10 @@ DATE_LINES = [
 ]
 
 
-def correction(fp_name):
+def correction(fp_name, lcsc=None):
+    if lcsc in PART_CORRECTIONS:
+        rot, off, src = PART_CORRECTIONS[lcsc]
+        return rot % 360, off, src
     for pat, rot, off, src in CORRECTIONS:
         if re.search(pat, fp_name):
             return rot % 360, off, src
@@ -141,7 +154,7 @@ def cpl_rows(b):
         if not lcsc:
             continue
         name = str(fp.GetFPID().GetLibItemName())
-        rot, (dx, dy), _ = correction(name)
+        rot, (dx, dy), _ = correction(name, lcsc)
         # the Gerbers' frame: KiCad's absolute coordinates, Y up (Gerber), so
         # JLC finds each part on the board without an origin to guess
         x, y = K.ToMM(fp.GetPosition().x), K.ToMM(fp.GetPosition().y)
@@ -171,7 +184,7 @@ def corrections_table(b):
     for fp, lcsc in assembled(b):
         if lcsc:
             name = str(fp.GetFPID().GetLibItemName())
-            rot, off, src = correction(name)
+            rot, off, src = correction(name, lcsc)
             out.append((fp.GetReference(), name, rot, off, src))
     return sorted(out, key=lambda r: natural(r[0]))
 
