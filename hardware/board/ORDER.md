@@ -75,9 +75,11 @@ colour from the previews. Don't drop ENIG.
 ### At the BOM step
 
 - Every line has an LCSC number. Check each shows in stock. The ones to
-  watch are the extended parts with low stock: STM32F413RGT6 (C468260,
-  about 90 in stock when last checked), the Molex headers (C504976), the
-  G6K-2F-Y relay (C2982926) and the TJA1042T/3 (C132227).
+  watch are the extended parts with low stock: STM32F413RGT6 (C468260, sold
+  out at JLC on 2026-11-27), the Molex headers (C504976), the G6K-2F-Y relays
+  (C2982926, two per board now) and the TJA1042T/3 (C132227).
+- U1 (STM32F413RGT6): buy them into your JLC parts library first, then at
+  this step set U1 to use your own (private) parts, not JLC's open stock.
 - If one is out of stock, stop and swap it in the schematic (`schematic/`).
   Don't let JLC substitute.
 
@@ -91,7 +93,10 @@ preview:
 |---|---|
 | U1 (STM32, LQFP-64) | pin 1 dot at the board's pin 1 mark |
 | K1 (relay) | the relay's pin 1 mark at the footprint's pin 1 |
-| U7, U9 (SOT-23-6) | pin 1 at the footprint's pin 1 dot |
+| U7, U9 (SOT-23-6) | pin 1 at the footprint's pin 1 dot; U7 is now the LMR16006Y (C290195), whose 180 rotation is untested (the X part's was confirmed) |
+| U8 (SOT-23-3, MCP1700) | pin 1 at the footprint's pin 1 mark (a new part, 180 rule untested for it) |
+| K2 (second relay) | its pin 1 mark at the footprint's pin 1, as K1 |
+| F1 (1812 PTC), L1 (6.8 µH) | centred on their pads (new footprints / parts) |
 | J1, J2 (Molex headers) | the body over its 18 holes; the locator peg on the hole outside the pin 1/2 column |
 
 Also check polarity on every diode, LED and ESD array: the cathode band, or
