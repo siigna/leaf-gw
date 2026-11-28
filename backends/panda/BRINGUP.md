@@ -36,7 +36,7 @@ box-side header; pins are the 18-pin connector's (`SPEC.md`).
 
 - [ ] Current with a blank MCU: note it; steady and well under the 150 mA
       budget, no climb.
-- [ ] Rails: +5V_IGN ≈ 5.16 V, +5V_SYS ≈ 4.8–4.9 V (after the OR diode),
+- [ ] Rails: +5V_IGN ≈ 5.32 V, +5V_SYS ≈ 4.9–5.0 V (after the OR diode),
       +3V3 ≈ 3.30 V, IGN_SENSE (PA1) ≈ 2.8–2.9 V at 12 V in.
 - [ ] Power LED on. Relay doesn't click; J1-9 ↔ J1-8 still continuous.
 - [ ] USB-C alone (no 12 V): power LED on, relay still closed (coil runs from

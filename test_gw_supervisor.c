@@ -198,14 +198,14 @@ static void test_wrap(void) {
 }
 
 static void test_ign_mv(void) {
-    /* 12 V at VIN_PROT -> 12 * 33/133 = 2.977 V at PA1 -> 3694 counts */
-    uint32_t mv = sup_ign_mv(3694u);
+    /* 12 V at VIN_PROT -> 12 * 22/122 = 2.164 V at PA1 -> 2685 counts */
+    uint32_t mv = sup_ign_mv(2685u);
     CHECK(mv > 11950u && mv < 12050u);
     CHECK(sup_ign_mv(0u) == 0u);
-    CHECK(sup_ign_mv(4095u) == 13300u);          /* full scale, no overflow */
-    /* threshold: 8 V reads 2463 counts */
-    CHECK(sup_ign_mv(2470u) >= SUP_IGN_MIN_MV);
-    CHECK(sup_ign_mv(2455u) < SUP_IGN_MIN_MV);
+    CHECK(sup_ign_mv(4095u) == 18300u);          /* full scale, no overflow */
+    /* threshold: 8 V reads 1790 counts */
+    CHECK(sup_ign_mv(1795u) >= SUP_IGN_MIN_MV);
+    CHECK(sup_ign_mv(1785u) < SUP_IGN_MIN_MV);
 }
 
 int main(void) {

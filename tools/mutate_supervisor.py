@@ -33,7 +33,7 @@ MUTANTS = [
     ("no transceiver settle", ">= SUP_XCVR_SETTLE_MS)", ">= 0u)"),
     ("transceivers stay on in fault", "sup_hw_xcvr(s->st != SUP_FAULT);", "sup_hw_xcvr(true);"),
     ("heartbeat kept in fault", "return s->st != SUP_FAULT;", "return true;"),
-    ("wrong IGN divider", "133u) / (4095u * 33u)", "100u) / (4095u * 33u)"),
+    ("wrong IGN divider", "122u) / (4095u * 22u)", "133u) / (4095u * 33u)"),   # the old 100k/33k board
 ]
 
 

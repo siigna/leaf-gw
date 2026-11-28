@@ -116,6 +116,6 @@ bool sup_heartbeat(const sup_t *s) { return s->st != SUP_FAULT; }
 bool sup_inline(const sup_t *s) { return s->st == SUP_ENGAGED; }
 
 uint32_t sup_ign_mv(uint32_t adc_raw) {
-    /* pin mV = raw * 3300 / 4095; VIN_PROT = pin * (100k + 33k) / 33k */
-    return (adc_raw * 3300u * 133u) / (4095u * 33u);
+    /* pin mV = raw * 3300 / 4095; VIN_PROT = pin * (100k + 22k) / 22k */
+    return (adc_raw * 3300u * 122u) / (4095u * 22u);
 }

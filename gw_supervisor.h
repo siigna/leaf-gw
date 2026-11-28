@@ -83,7 +83,7 @@ bool sup_heartbeat(const sup_t *s);
 bool sup_inline(const sup_t *s);
 
 /* PA1 ADC count (12 bit, 3.3 V ref) -> VIN_PROT in mV, through the
- * schematic's 100k / 33k divider (power.py). */
+ * schematic's 100k / 22k divider (power.py). */
 uint32_t sup_ign_mv(uint32_t adc_raw);
 
 #endif

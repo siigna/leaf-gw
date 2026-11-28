@@ -68,7 +68,7 @@ gives `arm-none-eabi-gcc`, scons and pycryptodome):
   APB1 for CAN, 48 MHz USB). The bootstub still runs the tree's
   `clock_init()` (48 MHz on our crystal); that only matters for its USB soft
   flasher, which we don't use.
-- **Ignition sense** on PA1 (ADC1_IN1), VIN_PROT through 100k / 33k. Below
+- **Ignition sense** on PA1 (ADC1_IN1), VIN_PROT through 100k / 22k. Below
   8 V (`SUP_IGN_MIN_MV`) the gateway won't engage, and drops out if engaged. On
   USB power alone VIN_PROT is 0 V, so the board stays in passthrough (and the
   relay coil has no supply there anyway).

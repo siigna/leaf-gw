@@ -13,7 +13,7 @@
  *   PB5/PB6  CAN2_RX/CAN2_TX  -> U3, Chassis CAN car side
  *   PA8/PA15 CAN3_RX/CAN3_TX  -> U4, V-CAN tap
  *   PC1/PC13/PA0 CAN1_STB/CAN2_STB/CAN3_STB (high = standby; TJA1042 pull-up)
- *   PA1  IGN_SENSE  VIN_PROT through 100k/33k, ADC1_IN1
+ *   PA1  IGN_SENSE  VIN_PROT through 100k/22k, ADC1_IN1
  *   PB12 RELAY_EN   AND gate input A (100k pull-down)
  *   PC6  WDT_KICK   TPS3828 WDI (floating = watchdog disabled)
  *   PC7  LED_STATUS high = on
