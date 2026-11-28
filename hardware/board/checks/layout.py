@@ -478,6 +478,11 @@ def check_copper_safety(bd):
                 f.append(f"relay NC K1.{nc} does not reach car-side {c[0]}.{c[1]} in copper")
         if one("K1", com) is not None and one("K1", com) == one("K1", nc):
             f.append(f"relay COM K1.{com} and NC K1.{nc} are joined in copper (bypasses the contact)")
+    # K2 switches the car-side termination: its COM pads sit on the car-side lines,
+    # its NO pads reach only the termination jumpers (a short would be caught above)
+    for com, car in (("11", ("J2", "8")), ("21", ("J2", "7"))):
+        if "K2" in bd.fps and (one("K2", com) is None or one("K2", com) != one(*car)):
+            f.append(f"relay COM K2.{com} does not reach car-side {car[0]}.{car[1]} in copper")
     # J2.9/J2.11: no track or zone may touch them
     for num in ("9", "11"):
         pd = bd.pad("J2", num)
@@ -658,8 +663,186 @@ def check_in2(bd):
     return f
 
 
+MARK_REACH = 1.0    # mm: a cathode mark lies within this beyond pad 1's solder-mask opening
+MARK_SPAN = 0.5     # ... and covers at least this fraction of the pad's width
+
+
+def check_polarity_marks(bd):
+    """Every diode and LED (D<n> with pads 1 = cathode and 2) has a cathode mark
+    on the top silkscreen: silkscreen within MARK_REACH beyond pad 1's opening,
+    on the side away from pad 2, across at least MARK_SPAN of the pad's width."""
+    f = []
+    drawings = [item_shape(d, K.F_SilkS) for d in bd.pcb.GetDrawings() if d.GetLayer() == K.F_SilkS]
+    for ref, fp in sorted(bd.fps.items()):
+        if not re.fullmatch(r"D\d+", ref) or sorted(p.GetNumber() for p in fp.Pads()) != ["1", "2"]:
+            continue
+        p1, p2 = bd.pad(ref, "1"), bd.pad(ref, "2")
+        c1, c2 = xy(p1.GetPosition()), xy(p2.GetPosition())
+        d = math.dist(c1, c2)
+        u = ((c1[0] - c2[0]) / d, (c1[1] - c2[1]) / d)
+        v = (-u[1], u[0])
+        m = item_shape(p1, K.F_Mask)
+        pts = [q for g in getattr(m, "geoms", [m]) for q in g.exterior.coords]
+        reach = max((x - c1[0]) * u[0] + (y - c1[1]) * u[1] for x, y in pts)
+        half = max(abs((x - c1[0]) * v[0] + (y - c1[1]) * v[1]) for x, y in pts)
+        zone = Polygon([(c1[0] + s * u[0] + t * v[0], c1[1] + s * u[1] + t * v[1])
+                        for s, t in ((reach, -half), (reach + MARK_REACH, -half), (reach + MARK_REACH, half), (reach, half))])
+        silk = unary_union([item_shape(g, K.F_SilkS) for g in fp.GraphicalItems() if g.GetLayer() == K.F_SilkS] + drawings)
+        hit = silk.intersection(zone)
+        pts = [q for g in getattr(hit, "geoms", [hit]) if hasattr(g, "exterior") for q in g.exterior.coords]
+        span = [(x - c1[0]) * v[0] + (y - c1[1]) * v[1] for x, y in pts]
+        if not span or max(span) - min(span) < MARK_SPAN * 2 * half - TOL:
+            f.append(f"{ref}: no cathode mark on the silkscreen beyond pad 1")
+    return f
+
+
+# only the 12 V nets: IGN carries the comma's own supply (amps), where one
+# 0.3 mm via is the weak link; the 5 V rails, VBUS and the coil return carry at
+# most ~0.5 A, well within one via
+POWER_VIA_NETS = tuple(B.NET_CLASSES["12V"][2])
+TWIN_REACH = 1.5    # mm
+
+
+def check_power_vias(bd):
+    """A 12 V net never changes layer through a single via: every via on one
+    has another via of its net within TWIN_REACH. The buck's
+    switch node has no via at all."""
+    f = []
+    for net in POWER_VIA_NETS:
+        pos = [xy(v.GetPosition()) for v in bd.vias(net)]
+        for q in pos:
+            if not any(0.001 < math.dist(q, o) <= TWIN_REACH for o in pos):
+                f.append(f"{net}: lone via at ({q[0]:.2f}, {q[1]:.2f}), no second via within {TWIN_REACH} mm")
+    for v in bd.vias("BUCK_SW"):
+        f.append(f"BUCK_SW: via at {xy(v.GetPosition())} (the switch node stays on F.Cu)")
+    return f
+
+
+def check_switch_node_clear(bd):
+    """No copper but GND on B.Cu under the buck's switch node or L1 (their
+    F.Cu copper and L1's courtyard, grown by board.SW_QUIET); nothing else
+    on F.Cu inside L1's courtyard."""
+    f = []
+    sw = [item_shape(p, K.F_Cu) for fp in bd.fps.values() for p in fp.Pads() if p.GetNetname() == "BUCK_SW"]
+    sw += [item_shape(t, K.F_Cu) for t in bd.tracks("BUCK_SW")]
+    l1 = polyset_to_shapely(bd.fps["L1"].GetCourtyard(K.F_CrtYd))
+    quiet = unary_union(sw + [l1]).buffer(B.SW_QUIET)
+    for t in bd.pcb.GetTracks():
+        n = t.GetNetname()
+        if n in ("GND", "BUCK_SW"):
+            continue
+        if t.IsOnLayer(K.B_Cu) and item_shape(t, K.B_Cu).intersects(quiet):
+            f.append(f"{n} {t.GetClass()[4:].lower()} on B.Cu at {xy(t.GetStart())} under the switch node / L1")
+        elif t.GetClass() == "PCB_TRACK" and t.GetLayer() == K.F_Cu and n != "+5V_IGN" and item_shape(t, K.F_Cu).intersects(l1):
+            f.append(f"{n} track on F.Cu at {xy(t.GetStart())} inside L1's courtyard")
+    return f
+
+
+STITCH_REACH = 3.5    # mm: along the edge, a GND via within this of every point where the pours reach
+STITCH_INSET = 1.0
+
+
+def gnd_stitches(bd):
+    """Points where an outer GND pour reaches In1: GND vias and In1-connected
+    GND through-hole pads."""
+    pts = [xy(v.GetPosition()) for v in bd.vias("GND")]
+    pts += [xy(p.GetPosition()) for fp in bd.fps.values() for p in fp.Pads()
+            if p.GetNetname() == "GND" and p.GetAttribute() == K.PAD_ATTRIB_PTH and p.FlashLayer(K.In1_Cu)]
+    return pts
+
+
+def check_gnd_stitching(bd):
+    """No outer-layer GND pour island reaches In1 through fewer than two
+    stitches (vias or plated GND pins), and along the board edge, wherever the
+    F.Cu and B.Cu pours both leave room for a via within 1.5 mm of the edge
+    inset, a stitch sits within STITCH_REACH (outside the via keepout strip
+    beside J2)."""
+    f = []
+    st = [Point(q) for q in gnd_stitches(bd)]
+    for lay, name in ((K.F_Cu, "F.Cu"), (K.B_Cu, "B.Cu")):
+        fill = bd.zone_fill("GND", lay)
+        for isl in getattr(fill, "geoms", [fill]):
+            if isl.is_empty:
+                continue
+            n = sum(1 for p in st if isl.distance(p) < 0.05)
+            if n < 2:
+                c = isl.representative_point()
+                f.append(f"GND pour island on {name} at ({c.x:.2f}, {c.y:.2f}), {isl.area:.2f} mm^2, "
+                         f"reaches In1 through {n} via(s)")
+    # where both pours leave room for a via (its ring plus 0.05 mm inside each fill)
+    room = bd.zone_fill("GND", K.F_Cu).intersection(bd.zone_fill("GND", K.B_Cu)).buffer(-0.35)
+    keep = unary_union([box(*k) for k in routes.VIA_KEEPOUT])
+    ring = box(0, 0, B.W, B.H).buffer(-STITCH_INSET).exterior
+    tree = STRtree(st) if st else None
+    gaps = []
+    for i in range(int(ring.length / 0.5)):
+        q = ring.interpolate(i * 0.5)
+        if keep.contains(q) or room.distance(q) > 1.5:
+            continue
+        if tree is None or not len(tree.query(q.buffer(STITCH_REACH))):
+            gaps.append(q)
+    if gaps:
+        f.append(f"board edge: {len(gaps)} points of GND pour with no stitch within {STITCH_REACH} mm, "
+                 f"e.g. ({gaps[0].x:.2f}, {gaps[0].y:.2f})")
+    return f
+
+
+MCU_12V_CLEAR = 3.0    # mm
+SUPPLY_12V = ("VIN_PROT", "IGN_FUSED")
+
+
+def check_12v_off_mcu(bd):
+    """The board's own 12 V supply (after the fuse) stays out of the MCU's
+    area: no VIN_PROT or IGN_FUSED copper within MCU_12V_CLEAR of U1's
+    courtyard; only the divided IGN_SENSE travels there."""
+    f = []
+    keep = polyset_to_shapely(bd.fps["U1"].GetCourtyard(K.F_CrtYd)).buffer(MCU_12V_CLEAR)
+    for net in SUPPLY_12V:
+        for t in bd.pcb.GetTracks():
+            if t.GetNetname() != net:
+                continue
+            for lay in (K.F_Cu, K.B_Cu):
+                if t.IsOnLayer(lay) and item_shape(t, lay).intersects(keep):
+                    f.append(f"{net} {t.GetClass()[4:].lower()} on {K.LayerName(lay) if hasattr(K, 'LayerName') else lay} "
+                             f"at {xy(t.GetStart())} is within {MCU_12V_CLEAR} mm of the MCU")
+    return f
+
+
+VIA_HOLE_WEB = 0.15   # mm, a via's hole edge to the nearest SMD pad, at least
+
+
+def check_via_pads(bd):
+    """No via in or touching an SMD pad, its own net's included: the via's ring
+    clear of every SMD pad's copper on the outer layers (no overlap, not even
+    touching), so the hole edge keeps at least VIA_HOLE_WEB of copper web."""
+    f = []
+    pads = []
+    for r, fp in bd.fps.items():
+        for p in fp.Pads():
+            if p.GetAttribute() == K.PAD_ATTRIB_SMD:
+                for lay in (K.F_Cu, K.B_Cu):
+                    if p.IsOnLayer(lay):
+                        pads.append((f"{r}.{p.GetNumber() or 'pad'}", lay, item_shape(p, lay)))
+    tree = STRtree([g for _, _, g in pads])
+    for v in bd.vias():
+        c = Point(xy(v.GetPosition()))
+        ring = c.buffer(mm(v.GetWidth(K.F_Cu)) / 2, 32)
+        hole = mm(v.GetDrillValue()) / 2
+        for i in tree.query(ring.buffer(VIA_HOLE_WEB + 0.2)):
+            name, lay, g = pads[i]
+            if not v.IsOnLayer(lay):
+                continue
+            web = g.distance(c) - hole
+            if ring.distance(g) <= TOL or web < VIA_HOLE_WEB - TOL:
+                f.append(f"via ({v.GetNetname()}) at ({c.x:.2f}, {c.y:.2f}) touches SMD pad {name} "
+                         f"(hole edge {web:.3f} mm from the pad)")
+    return f
+
+
 CHECKS = [check_parity, check_top_side, check_pairs, check_mismatch, check_reference_plane,
-          check_12v_width, check_keepouts, check_copper_safety, check_silk, check_pin_labels, check_in2]
+          check_12v_width, check_keepouts, check_copper_safety, check_silk, check_pin_labels, check_in2,
+          check_via_pads, check_polarity_marks, check_power_vias, check_gnd_stitching, check_12v_off_mcu,
+          check_switch_node_clear]
 
 
 def run(bd):

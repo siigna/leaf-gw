@@ -110,20 +110,28 @@ It takes about 40 minutes, most of it in the pre-route searches and freerouting.
    freerouting has no differential-pair support, so the pairs never reach it.
    The same file draws a few hand routes into spots freerouting can't reach:
    CC1, SWDIO, the MCU supply pins boxed in by their neighbours, and the
-   USBLC6's VBUS via.
+   USBLC6's VBUS via. It also draws the short local copper that must not be
+   left to chance (`LOCAL_LINKS`, `POWER_LINKS`): each transceiver's VCC and
+   VIO cap, U5/U6's supply cap, the termination chains off the relays' NO
+   contacts, the two coils in parallel, and the buck's own copper (switch
+   node, hot-loop VIN and GND, bootstrap, feedback and its sense at the output
+   cap, the input protection).
 4. **Fanout** (`build.fanout`). Each SMD pad on GND or +3V3 gets a via to its
    plane. So does each signal pin the CAN lines close in on (`routes.FANOUT_SIGNALS`).
    A spot is accepted only where the via's In1 antipad stays clear of the GND
-   plane under the pairs.
-5. **Pre-routes** (`repair.preroute`, list in `routes.PREROUTE`). The long
-   12 V pass-throughs (IGN, VIN12_10/12, VIN_PROT), the transceivers' STB
-   lines and the MCU's top-row CAN pins and BOOT0 are routed first with the
+   plane under the pairs, and where its ring keeps `board.VIA_PAD_WEB` from
+   every SMD pad, its own net's included (no via in or touching a pad).
+5. **Pre-routes** (`repair.preroute`, list in `routes.PREROUTE`). The
+   transceivers' STB lines and the MCU's top-row CAN pins and BOOT0 are
+   routed first with the
    grid router (step 8), while the board is still open. Each search is capped
    (8 M expansions, 900 s, a box 14 mm around its ends) and logs why it gave
    up; whatever fails is left to freerouting.
 6. **Silkscreen.** Library silkscreen that would print on a pad or overlap
    other silkscreen is dropped (`silk_cleanup`). Then the logo, the text, the
-   back-side pin names and the bench warning go on.
+   back-side pin names and the bench warning go on, and a cathode bar beyond
+   pad 1 of every diode and LED whose library mark was dropped
+   (`polarity_marks`).
 7. **freerouting.** The board is exported to DSN and the DSN is patched. In1
    and In2 become power layers, so nothing routes on them. The pairs and the
    plane nets leave the network, and their copper turns into keepouts. Each
@@ -132,18 +140,24 @@ It takes about 40 minutes, most of it in the pre-route searches and freerouting.
    too (`routes.VIA_KEEPOUT`: via antipads there pinch the In2 plane). New vias
    use a padstack 0.05 mm wider than the real one, so freerouting's via-to-via
    clearance also keeps 0.5 mm hole to hole; they are shrunk back after the
-   import. freerouting 2.5 then runs single-threaded (`-mt 1`) with a fixed
+   import. The DSN also says `via_at_smd off`, and B.Cu under the buck's
+   switch node and L1 is a keepout (`build.quiet_zone`). freerouting 2.5 then runs single-threaded (`-mt 1`) with a fixed
    pass count (wall time capped at 900 s), and the SES is imported back.
 8. **Repair.** If freerouting leaves anything open, `repair.py` routes it on a
    0.05 mm grid (A* over F.Cu and B.Cu with vias, capped at 4 M expansions
-   and 240 s per search), clear of every other net's copper and of the via
-   keepouts. On the committed board freerouting finished everything, so the
+   and 240 s per search), clear of every other net's copper, of the via
+   keepouts and, for its vias, of every SMD pad. On the committed board freerouting finished everything, so the
    repair had nothing to do.
 9. **Clean-up and zones.** Tracks that freerouting necked below the minimum
    are widened back where there is room (`widen_necks`); one that can't be
-   widened is taken out and its gap repaired at full width. The zones go on:
-   In1 solid GND, In2 solid +3V3, and GND pours on F.Cu and B.Cu with thermal
-   reliefs, and are filled. Then `drop_dangling` deletes every via joined on
+   widened is taken out and its gap repaired at full width. Every lone via
+   on a 12 V or 5 V net gets a twin 0.85–1.4 mm away, joined on both layers
+   (`twin_power_vias`). The zones go on: In1 solid GND, In2 solid +3V3, and
+   GND pours on F.Cu and B.Cu with thermal reliefs, and are filled. Then
+   `stitch_gnd` puts GND vias along the board edge about every 5 mm where
+   both pours leave room, gives every outer pour island at least two vias to
+   In1, and cuts an island that can't take them out of its pour (a rule
+   area), unless a pad hangs on it alone. Then `drop_dangling` deletes every via joined on
    fewer than two layers and every track with a loose end (freerouting's
    leftovers, fanout and escape vias it bypassed), one at a time and only if
    nothing comes apart without it.
@@ -159,10 +173,15 @@ It takes about 40 minutes, most of it in the pre-route searches and freerouting.
 `placement.py` and `routes.py` are drawn on the first, 59 × 39.5 mm board.
 That was too dense: freerouting and the repair left 1 to 3 connections open
 on every run. `board.spread()` opens the drawing up into the 75 × 50 mm
-outline by moving whole blocks rigidly. It adds 4, 7 and 5 mm in x at three
+outline by moving whole blocks rigidly. It adds 1, 10 and 5 mm in x at three
 vertical cuts (J1's pin field | the clusters and MCU, ADAS side and relay |
 car side, car side | J2's pin field), 3 mm in y below the top band and 7.5 mm
-below CAN0, between the headers. Only straight runs along the shift cross a
+below CAN0, between the headers. Groups that sit in room the spread opened,
+or would straddle a cut, are placed and routed in board mm after the spread
+(`placement.CAR`, `ADAS_TERM`, `POWER`; `routes.car_side`, `POWER_LINKS`):
+the car side right of K1 with K2, both termination chains, the power entry
+and the buck, the LDO strip, and U5/U6's supply caps. Nothing in them moves
+with a cut. Only straight runs along the shift cross a
 cut, so every scripted route keeps its shape (`routes._spread` asserts it),
 and the pair lengths change equally on both lines. A 70 × 45 mm version of
 the same spread still left one connection open (CAN2_STB, then RELAY_GATE),
@@ -175,11 +194,11 @@ blocks are:
 
 | where | what |
 |---|---|
-| top left | CAN2 (V-CAN tap): ESD array, transceiver 3, termination, between the CAN2 lines |
-| top right | power entry next to J2's IGN pin: PTC, TVS, reverse diode, input caps, the buck |
-| middle left | CAN1 ADAS side next to J1: ESD array, transceiver 1, termination |
-| middle | the relay on all four CAN1 lines, between the two halves |
-| middle right | CAN1 car side: ESD array, transceiver 2, termination; the LDO above it |
+| top left | CAN2 (V-CAN tap): ESD array, transceiver 3, termination, between the CAN2 lines; under it the LDO with its caps |
+| top right | the buck as one group (below); right of it the power entry: reverse diode, TVS, PTC tapping the B.Cu IGN lane; the power LED; test pads TP7–TP10 |
+| middle left | CAN1 ADAS side next to J1: ESD array, transceiver 1 |
+| middle | K1 on all four CAN1 lines, between the two halves; the ADAS-side termination along its top, off its NO contacts |
+| middle right | K2 on the car-side lines, the car-side termination beside its NO contacts, then the car-side ESD array and transceiver 2 |
 | across | CAN0, straight through |
 | bottom | MCU (crystal and decoupling at its pins), USB-C on the bottom edge with the USBLC6 beside it, relay driver and watchdog, SWD pads, DFU button, ignition sense |
 
@@ -189,6 +208,22 @@ transceiver's CANL/CANH pins (rotation 180, pins 6/7 on its left) across a
 0.77 mm channel. Short spurs drop into that channel from each line. This is
 how the lines tap the cluster without crossing each other, so the CAN copper
 needs no vias at all.
+
+The buck (U7) is one tight group: D8 right above the SW pin, the input caps
+right of VIN with C26 first and their GND pads under D8's anode (hot loop
+C26–VIN–SW–D8–GND 10.3 mm², from 60.9), L1 beside D8 on the same SW copper
+as the bootstrap cap, the output caps under L1's output, and the feedback
+divider between them and the FB pin, so FB, CB and the sense at C28 are a few
+mm on F.Cu. The output caps' GND is on the far side of the group from D8's
+anode (about 12 mm, through the pour and In1 0.2 mm below); keeping both
+loops on the same side would have pushed the sense trace and the input feed
+across each other.
+
+K2 (rotation 90) takes the car pair through the channel between its pad
+rows: the L line leaves up through COM_B and the H line down through COM_A,
+so the contacts sit on the lines with no stub, and its NO pads face the
+car-side jumpers. Its coil pads sit next to K1's; the two coils are joined on
+F.Cu (+5V_IGN) and share the driver and flyback diode.
 
 The relay is DPDT, pole B (L) in the left column and pole A (H) in the right.
 ADAS L lands on COM_B from the left. ADAS H passes between COM_B and NC_B to
@@ -291,7 +326,24 @@ these class widths keep a necked track at or above 0.127 mm and 0.5 mm.
      the board;
    - pin labels: each header has exactly one back-side label per pin row
      ("n … / n+1 …"), its centre within 0.3 mm of that row's pins, on the
-     header's inner side with its near end 0.15 to 5 mm from the pads.
+     header's inner side with its near end 0.15 to 5 mm from the pads;
+   - In2: only short hops on the +3V3 plane, which stays one region with no
+     neck under 1.0 mm (see "Known limits");
+   - vias and pads: no via ring overlaps or touches any SMD pad, its own net's
+     included, so the hole edge keeps at least 0.15 mm of copper web;
+   - polarity marks: every diode and LED has top silkscreen within 1 mm beyond
+     pad 1 (the cathode), across at least half the pad's width;
+   - power vias: every via on a 12 V or 5 V net has a second via of its net
+     within 1.5 mm (the USBLC6's VBUS reference pin, boxed in by the USB pair
+     and carrying no load current, is exempt), and the switch node has none;
+   - GND stitching: every F.Cu or B.Cu GND pour island reaches In1 through at
+     least two vias or plated GND pins, and along the board edge (1 mm in),
+     wherever both pours leave room for a via, one sits within 3.5 mm
+     (except the via keepout strip beside J2);
+   - 12 V off the MCU: no VIN_PROT or IGN_FUSED copper within 3 mm of U1's
+     courtyard;
+   - switch node: nothing but GND on B.Cu under the buck's switch node and
+     L1 (0.3 mm around), and no other net on F.Cu inside L1's courtyard.
 5. **Mutation tests** (`checks/test_layout_mutations.py`). Each test loads the
    real board, breaks it in memory and asserts that its check fails for the
    intended reason:
@@ -320,6 +372,16 @@ these class widths keep a necked track at or above 0.127 mm and 0.5 mm.
    | the logo moved onto MCU pins | silkscreen (pad opening) |
    | a 0.1 mm line added to the logo | silkscreen (line width) |
    | a J2 pin label moved 1 mm off its row | pin labels |
+   | a relay K2 COM track removed | copper safety (K2) |
+   | a GND fanout via moved onto C26's pad / its ring 0.2 mm into the pad | vias and pads |
+   | D6's cathode mark removed | polarity marks |
+   | a +5V_IGN via's twin removed | power vias |
+   | a via on the switch node | power vias |
+   | one of the two vias of a GND pour island removed | GND stitching (island) |
+   | the GND vias along the middle of the top edge removed | GND stitching (edge) |
+   | a VIN_PROT track across the MCU | 12 V off the MCU |
+   | an IGN_SENSE track on B.Cu under L1 | switch node |
+   | a 10 mm SWDIO track on In2, In2 split, In2 neck | In2 |
    | a CAN0_H stub run into CAN0_L, saved and run through `kicad-cli pcb drc` | DRC |
 
    The unmutated board must pass every check.
@@ -389,19 +451,19 @@ part of the safety design, so state it on the drawing.
 
 ### Known limits of the layout
 
-- **Routing is complete.** The committed board passes the DRC with 0 errors,
-  0 warnings and 0 unconnected items, and every layout check and mutation
-  test passes. It was built by `build.py` and then had its dangling vias and
-  stubs removed by the same `drop_dangling` pass `build.py` now ends with
-  (that pass's via test was fixed after the build). Its silkscreen (the leaf,
-  the realigned back-side pin labels) was then redrawn with `--silk-only`;
-  tracks, vias and zone fills are unchanged.
-- **Fresh rebuilds don't reliably converge.** A fresh build left VIN12_12 open
-  once: freerouting isn't deterministic, and the 12 V pass-throughs must go
-  round one of J2's ends, which forces crossings with the bus loops. The work
-  toward scripting those crossings is parked on branch
-  `layout-determinism-wip` (its commit message has the results and next
-  steps).
+- **Routing is complete.** The committed board is a fresh `build.py` output
+  (no hand edits): DRC 0 errors, 0 warnings, 0 unconnected, and every layout
+  check and mutation test passes. The pre-order review revision was validated by two fresh
+  `check_layout.sh --rebuild` runs on 2026-11-27, both valid on the first
+  routing attempt; an earlier pair had one run leave SWCLK unrouted on all six
+  attempts, so SWCLK is now pre-routed (`routes.PREROUTE`).
+- **The buck's output loop closes through the pour.** The output caps' GND
+  sits about 12 mm from D8's anode, on the far side of the group (see
+  "Placement"); the return runs in the F.Cu pour and the In1 plane 0.2 mm
+  below. The input hot loop, the one with the fast edges, is 10.3 mm².
+- **USBLC6 VBUS has one via.** U9's VBUS pin is the clamp's reference and
+  carries no load current; it is boxed in by the USB pair, so its single via
+  is exempt from the twin-via rule. The load path from J3 to D10 has twins.
 
 - **CAN1 ADAS pair is never coupled.** It runs from J1's pins around
   transceiver 1 to the relay's COM contacts. All of that is header breakout,
@@ -426,7 +488,7 @@ part of the safety design, so state it on the drawing.
   pads on 2 mm pitch. Left to the routers, the 12 V and IGN tracks went around
   J2's ends, crossed each other and failed differently on every build. Now the
   bus loops, IGN and 12 V run on B.Cu in pin order (no crossings), VIN12_10/12
-  enter J2 on a ~3.6 mm In2 hop between its holes (J2's other pads have no
+  enter J2 on a ~4.5 mm In2 hop (two vias) between its holes (J2's other pads have no
   inner rings), and IGN, which carries the comma's supply, reaches J2.14/J2.2
   on an outer-layer lane along the board edge. In2 carries nothing else:
   `check_in2` limits any In2 copper to 5 mm per net and requires the +3V3
@@ -481,21 +543,21 @@ numbers. The drawing is Molex-proprietary and is not in the repo.
 
 ## Part choices
 
-All 37 BOM lines are JLCPCB-assemblable: 22 basic, 1 preferred extended, 14
-extended. `out/parts.csv` has the lot, with stock as of 2026-11-26.
+All 38 BOM lines are JLCPCB-assemblable: 20 basic, 1 preferred extended, 17
+extended. `out/parts.csv` has the lot, with stock as of 2026-11-27.
 
 | block | part | LCSC | note |
 |---|---|---|---|
-| MCU | STM32F413RGT6 | C468260 | as spec; only 90 in stock, so buy it early |
+| MCU | STM32F413RGT6 | C468260 | as spec; only 11 in stock on 2026-11-27, so buy it early |
 | CAN ×3 | TJA1042T/3/1J | C132227 | STB and TXD pulled up to VIO inside (datasheet 7.2.3), so standby by default |
 | CAN ESD ×3 | PESD2CAN,215 | C75176 | |
-| relay | Omron G6K-2F-Y DC5 | C2982926 | as spec, 14k in stock |
+| relay ×2 | Omron G6K-2F-Y DC5 | C2982926 | as spec; K2 switches the car-side termination, coil parallel to K1's |
 | coil FET | AO3400A | C20917 | logic-level at 3.3 V gate |
 | AND | SN74LVC1G08DBVR | C7666 | |
 | watchdog | TPS3828-33DBVR | C20032 | **substitution**, see below |
-| buck | LMR16006XDDCR | C87080 | 4–60 V in, 600 mA |
-| LDO | XC6206P332MR-G | C5446 | 250 mV dropout at 100 mA, so USB-only power works |
-| input | nSMD020-30V PTC, SMBJ24A, SS210 | C69680, C123819, C14996 | fuse → TVS → reverse diode |
+| buck | LMR16006YDDCR, 6.8 µH SWPA4030S6R8MT | C290195, C62684 | 4–60 V in, 600 mA, 2.1 MHz (above the AM band) |
+| LDO | MCP1700T-3302E/TT | C39051 | −40…+125 °C; low dropout, so USB-only power works |
+| input | mSMD050-60V PTC (1812), SMBJ33A, SS210 | C70113, C224019, C14996 | fuse → TVS → reverse diode |
 | USB | HRO TYPE-C-31-M-12, USBLC6-2SC6 | C165948, C7519 | |
 
 Pin picks the spec left open: watchdog kick **PC6**, status LED **PC7**, both
@@ -517,10 +579,12 @@ system memory.
   toggle PC6 at least every 0.9 s; the board image does so every 100 ms from
   the main loop, only while healthy (`gw_supervisor.c`).
   Breakpoints longer than that reset the MCU.
-- **Buck at 5.16 V, not 5.0 V** (27k / 4.7k on the 0.765 V reference). After the
+- **Buck at 5.32 V, not 5.0 V** (28k / 4.7k on the 0.765 V reference). After the
   OR diode, +5V_SYS has to stay inside the TJA1042's 4.5–5.5 V VCC range. The
   relay coil runs from +5V_IGN before the diode; it is rated for 150 % of 5 V.
 - **Vertical headers**, not right-angle (stock, above).
-- **Ignition sense**: 100k / 33k from the protected IGN rail, 100 nF, and a
-  1N4148W clamp to 3V3 (12 V in gives 2.9 V on PA1).
+- **Ignition sense**: 100k / 22k from the protected IGN rail, 100 nF, and a
+  1N4148W clamp to 3V3 (12 V in gives 2.16 V on PA1, 3.3 V at 18.3 V). The
+  100k sits at the 12 V source by the buck, so only the divided IGN_SENSE
+  runs to the MCU.
 - **No `.kicad_sch`**, so phase 2's ERC is SKiDL's, not `kicad-cli sch erc`.

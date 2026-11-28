@@ -42,7 +42,8 @@ CORRECTIONS = [
      "confirmed for U1 (C468260) in JLC's placement preview, 2026-11-27"),
     (r"^SOT-23-6", 180, (0, 0),
      "kicad-jlcpcb-tools jlcfootprint README / truth.csv: SOT-23 family 180 (JLC preview); "
-     "confirmed for U7 (C87080) in JLC's placement preview, 2026-11-27; C7519 differs (PART_CORRECTIONS)"),
+     "confirmed for the LMR16006X (C87080) in JLC's placement preview, 2026-11-27; U7 is now the Y (C290195), "
+     "same TI DDC package: verify; C7519 differs (PART_CORRECTIONS)"),
     (r"^SOT-23-5", 180, (0, 0), "kicad-jlcpcb-tools truth.csv: SOT-23-5 LMV321 at 0 -> 180 (JLC preview)"),
     (r"^SOT-23", 180, (0, 0), "kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)"),
     (r"^USB_C_Receptacle_HRO_TYPE-C-31-M-12", 0, (0, -1.571),

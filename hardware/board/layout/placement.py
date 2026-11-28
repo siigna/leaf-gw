@@ -39,10 +39,9 @@ def header_pin(jx, n):
 # CANH (pin 7) on the left-hand pin column, facing the bus; the ESD array sits
 # just left of them at rotation 180 (pads 1/2 on its right, facing the
 # transceiver). routes.py runs the bus lines around each cluster.
-U4C = (17.5, 4.1)      # CAN2 (V-CAN tap), top left
+U4C = (17.5, 4.85)     # CAN2 (V-CAN tap), top left; low enough for C20 between pin 5 and the L line
 U2C = (17.5, 13.6)     # CAN1 ADAS side
-RELAY = (28.2, 17.5)   # rotation 180: pole B (L) left column, pole A (H) right
-U3C = (41.7, 17.0)     # CAN1 car side
+RELAY = (28.2, 18.0)   # rotation 180: pole B (L) left column, pole A (H) right
 MCU = (22.0, 31.0)
 USB = (40.6, 36.0)
 
@@ -60,55 +59,21 @@ P = {
     # --- CAN2 (V-CAN tap), top left
     "D23": esd_at(U4C),
     "U4": (U4C[0], U4C[1], 180),
-    "C19": (21.8, 3.1, 90),      # VCC
-    "C20": (21.8, 5.1, 90),      # VIO
-    "JP6": (23.6, 1.45, 270),     # hangs off the L line
+    "C19": (21.8, 3.85, 90),     # VCC
+    "C20": (15.5, 1.58, 0),      # VIO, between pin 5 and the L line
+    "JP6": (23.6, 1.45, 270),    # hangs off the L line
     "R10": (23.85, 4.1, 180),    # pin 2 (L) under JP6, pin 1 (MID) toward R9/C21
-    "C21": (26.2, 5.8, 90),
-    "JP5": (23.6, 6.75, 90),     # stands on the H line
+    "C21": (26.2, 6.2, 90),
+    "JP5": (23.6, 8.25, 90),     # stands on the H line
     "R9": (26.2, 2.6, 90),
 
     # --- CAN1 ADAS side
     "D21": esd_at(U2C),
     "U2": (U2C[0], U2C[1], 180),
     "C13": (21.8, 12.2, 90),
-    "C14": (22.3, 14.0, 0),
-    "JP2": (11.0, 9.8, 90),      # stands on the L line
-    "R6": (13.85, 9.15, 180),    # pin 2 (L) next to JP2, pin 1 (MID) next to C15
-    "C15": (16.9, 9.15, 0),
-    "JP1": (11.0, 17.4, 270),    # hangs off the H line
-    "R5": (13.85, 18.05, 0),
+    "C14": (15.5, 10.33, 0),     # VIO, between pin 5 and the L line
 
     "K1": (RELAY[0], RELAY[1], 180),
-
-    # --- CAN1 car side
-    "D22": esd_at(U3C),
-    "U3": (U3C[0], U3C[1], 180),
-    "C16": (46.4, 15.6, 90),
-    "C17": (46.6, 17.6, 0),
-    "JP4": (35.8, 13.2, 90),
-    "R8": (38.65, 12.55, 180),   # pin 2 (L) next to JP4
-    "JP3": (35.8, 20.8, 270),
-    "R7": (38.65, 21.45, 0),
-    "C18": (41.7, 21.45, 0),
-
-    # --- power entry and buck (top edge, right; IGN comes in at J2 pin 14)
-    "D6": (57.3, 4.1, 90),       # TVS
-    "F1": (52.6, 6.6, 0),
-    "D7": (51.1, 2.1, 0),        # reverse-polarity diode
-    "C26": (49.5, 6.0, 90),
-    "R13": (47.9, 6.0, 90),
-    "C24": (45.9, 2.1, 90),
-    "C25": (43.8, 2.1, 90),
-    "U7": (44.4, 6.2, 180),
-    "C27": (40.6, 6.35, 90),
-    "L1": (38.6, 2.5, 0),
-    "R14": (38.6, 6.4, 90),
-    "R15": (36.9, 6.4, 90),
-    "D8": (33.8, 3.9, 90),
-    "C28": (30.9, 2.1, 90),
-    "C29": (30.9, 5.8, 90),
-    "C30": (28.9, 2.0, 90),
 
     # --- MCU
     "U1": (MCU[0], MCU[1], 0),
@@ -117,10 +82,10 @@ P = {
     "C3": (14.7, 32.77, 90),      # VDDA pin 13
     "C9": (13.4, 34.0, 90),      # VDDA bulk
     "C4": (19.73, 38.6, 0),       # VDD pin 19
-    "C1": (22.3, 38.6, 0),       # VCAP pin 30
-    "C5": (26.23, 38.6, 0),       # VDD pin 32
+    "C1": (24.525, 38.6, 180),   # VCAP pin 30, pad 1 right under the pin
+    "C5": (27.0, 38.6, 0),       # VDD pin 32
     "C6": (29.3, 25.3, 90),      # VDD pin 48
-    "C8": (32.4, 38.7, 0),      # 3V3 bulk
+    "C8": (32.6, 38.7, 0),      # 3V3 bulk
     "C12": (14.2, 30.3, 90),     # NRST
     "Y1": (11.5, 28.6, 270),
     "C10": (11.8, 24.8, 0),
@@ -145,27 +110,15 @@ P = {
     "R20": (47.4, 36.4, 90),
     "D10": (47.4, 31.6, 90),
 
-    # --- 5 V OR-ing, LDO, power LED
-    "D9": (31.0, 10.7, 0),
-    "U8": (44.2, 11.4, 0),
-    "C31": (47.4, 11.4, 90),
-    "C32": (35.0, 10.7, 0),
-    "C33": (41.4, 11.4, 90),
-    "R16": (23.3, 9.3, 0),
-    "D11": (20.0, 9.3, 0),
-
     # --- relay driver and watchdog
     "U5": (31.4, 31.6, 0),
-    "C22": (34.4, 31.6, 90),
     "U6": (31.4, 35.3, 0),
-    "C23": (34.4, 35.3, 90),
     "Q1": (14.6, 21.75, 0),
     "R11": (11.1, 21.8, 0),
-    "R12": (29.0, 38.7, 0),
+    "R12": (29.5, 38.7, 0),
     "D5": (19.6, 21.8, 0),
 
-    # --- ignition sense
-    "R17": (1.8, 37.0, 90),
+    # --- ignition sense (the divider's top, R17, sits at the 12 V source: POWER below)
     "R18": (4.1, 37.0, 90),
     "C34": (6.3, 37.2, 90),
     "D12": (8.6, 36.4, 90),
@@ -176,9 +129,9 @@ P = {
 # the few strips clear of pads and part bodies; checks/layout.py verifies pad
 # clearance and the logo's line and gap widths.
 SILK_TEXT = {
-    "\u00a9 2026 Stephen Bouche \u00b7 MIT": (21.9, 23.5, 1.0, 0.65, 0, "left"),
+    "\u00a9 2026 Stephen Bouche \u00b7 MIT": (21.9, 24.0, 1.0, 0.65, 0, "left"),
     "leaf-gw rev {rev}": (49.1, 21.9, 1.0, 0.8, 90, "left"),
-    "bench / test car only": (1.2, 7.35, 1.0, 0.8, 0, "left"),
+    "bench / test car only": (1.2, 7.75, 1.0, 0.8, 0, "left"),
 }
 # Back side (no parts there): what each header pin carries, which header goes
 # where, and the warning again, large. Bottom text reads mirrored from the top.
@@ -207,12 +160,14 @@ QR = (30.1, 13.0)
 LABELS = [   # the most crowded first: each label placed blocks spots for the next
     ("PWR", "D11", "top", 1.0),
     ("V-CAN TERM", "JP5", "top", 1.0),   # JP6, the same port right above it, is boxed in
-    ("ADAS TERM", "JP1", "top", 1.0), ("ADAS TERM", "JP2", "top", 1.0),
-    ("CAR TERM", "JP3", "top", 1.0), ("CAR TERM", "JP4", "top", 1.0),
+    ("ADAS TERM", "JP1", "top", 1.0),    # the row JP2 .. JP1 along K1's top
+    ("CAR TERM", "JP3", "top", 1.0),     # JP3/JP4 beside K2, the car-side termination relay
+    ("VIN", "TP7", "top", 1.0), ("5V IGN", "TP8", "top", 1.0), ("5V SYS", "TP9", "top", 1.0),
+    ("GND", "TP10", "top", 1.0),
     ("DIO", "TP1", "top", 1.0), ("CLK", "TP2", "top", 1.0), ("RST", "TP3", "top", 1.0),
     # SWD's lower row is boxed in (TP1/TP2 above, R1/R17/R18 around, the edge):
     # named on a line above the upper row's labels instead
-    ("SWD  lower: 3V3 GND", "TP1", "top", 1.0),
+    ("lower: 3V3 GND", "TP1", "top", 1.0),
     ("BOOT0", "TP6", "top", 1.0), ("DFU", "SW1", "top", 1.0),
     ("STAT", "D1", "top", 1.0),
     ("USB (bench)", "J3", "top", 1.0),
@@ -243,3 +198,77 @@ BACK_TEXT = {t: (*B.spread(x, y), *rest) for t, (x, y, *rest) in BACK_TEXT.items
 # the compact drawing), not moved by the block its anchor falls in
 _dx = {9.6: P["J1"][0] - J1X, 49.4: P["J2"][0] - J2X}
 BACK_TEXT.update({t: (x + _dx[x], B.spread(J1X, y)[1], *rest) for t, (x, y, *rest) in BACK_ROWS.items()})
+
+# --- placed in board mm, after the spread -------------------------------------
+# These groups sit in room spread() opened (or straddle one of its cuts), so
+# they are placed on the real board, and so are their scripted routes
+# (routes.car_side, routes.POWER_LINKS): nothing here moves with a cut.
+
+# CAN1 car side, right of the relay. K2 (rotation 90: pad rows top/bottom) takes
+# the car pair through the channel between its rows; the L line leaves up
+# through COM_B (21), the H line down through COM_A (11). Its NO pads (24 top
+# right, 14 bottom right) feed the car-side termination beside it, then the
+# ESD array and transceiver 2 between the two lines, as on the other ports.
+U3C = (57.5, 21.0)
+CAR = {
+    "K2": (39.25, 21.0, 90),
+    "JP4": (46.29, 17.5, 0),     # K2_NO_B (L leg)
+    "JP3": (46.29, 24.5, 0),     # K2_NO_A (H leg)
+    "C18": (46.29, 21.0, 180),
+    "R8": (48.81, 17.8, 90),
+    "R7": (48.81, 20.9, 90),
+    "D22": (U3C[0] - 5.9, U3C[1], 180),
+    "U3": (U3C[0], U3C[1], 180),
+    "C17": (55.5, 17.73, 0),     # VIO, between pin 5 and the L line
+    "C16": (62.2, 19.6, 90),     # VCC
+}
+# ADAS-side termination, off K1's NO pads (24, 14) along the top of the relay
+ADAS_TERM = {
+    "JP2": (25.9, 14.2, 0),      # K1_NO_B (L leg)
+    "R6": (29.165, 14.2, 180),
+    "C15": (31.515, 14.15, 270),
+    "R5": (33.865, 14.2, 180),
+    "JP1": (37.135, 14.2, 180),  # K1_NO_A (H leg)
+}
+# Power, top band. Input protection on the right (IGN taps the B.Cu IGN lane at
+# F1), the buck as one tight group left of it: D8 right above U7's SW pin, the
+# input caps (C26 first) right of VIN with their GND pads under D8's anode,
+# L1 beside D8 sharing the SW node with the bootstrap cap C27, the output caps
+# under L1's output with the feedback divider between them and U7's FB pin.
+# The LDO and power LED go to the strip under the V-CAN cluster.
+POWER = {
+    "D8": (42.0, 2.6, 0),
+    "U7": (38.863, 6.16, 0),
+    "C27": (37.655, 2.87, 90),
+    "L1": (34.515, 2.1, 180),
+    "C26": (42.483, 5.21, 0),
+    "C25": (45.05, 6.16, 90),
+    "C24": (47.12, 6.16, 90),
+    "R13": (40.4, 8.75, 180),
+    "R14": (35.22, 5.55, 0),
+    "R15": (35.22, 7.11, 180),
+    "C28": (32.65, 6.16, 270),
+    "C29": (30.58, 6.16, 270),
+    "C30": (30.6, 3.4, 90),
+    "D7": (52.5, 7.1, 0),        # reverse-polarity diode
+    "D6": (54.5, 2.9, 180),      # TVS
+    "F1": (59.06, 7.2, 180),     # pad 1 (IGN) right, at the lane tap
+    "R17": (50.5, 9.7, 0),       # IGN divider top, at the 12 V source
+    "TP7": (47.1, 9.9, 0),       # VIN_PROT
+    "TP10": (49.5, 2.6, 0),      # GND, by the buck
+    "TP8": (31.95, 9.9, 0),      # +5V_IGN
+    "D9": (35.7, 9.6, 180),      # 5 V OR-ing
+    "TP9": (40.4, 10.87, 0),     # +5V_SYS
+    "U8": (13.9, 10.75, 0),
+    "C33": (10.8, 11.0, 90),
+    "C31": (16.8, 10.75, 90),
+    "C32": (18.6, 10.75, 90),
+    "D11": (66.4, 3.0, 0),       # power LED, by the input
+    "R16": (66.4, 5.0, 0),
+    # MCU-side decoupling at the supply pin (U5 VCC, U6 VDD: pin 5)
+    "C22": (35.02, 41.6, 270),
+    "C23": (35.02, 45.3, 270),
+}
+P.update(CAR)
+P.update(ADAS_TERM)
+P.update(POWER)

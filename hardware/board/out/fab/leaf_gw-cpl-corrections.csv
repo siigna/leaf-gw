@@ -45,11 +45,12 @@ D12,D_SOD-123,0,0 0,"two-terminal or symmetric part, no correction; check polari
 D21,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
 D22,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
 D23,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
-F1,Fuse_1206_3216Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
+F1,Fuse_1812_4532Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
 J1,Molex_iGrid_501645-1820_2x09_P2.00mm_Vertical,0,0 0,project footprint drawn from the EasyEDA footprint of C504976 in its own orientation; verify origin
 J2,Molex_iGrid_501645-1820_2x09_P2.00mm_Vertical,0,0 0,project footprint drawn from the EasyEDA footprint of C504976 in its own orientation; verify origin
 J3,USB_C_Receptacle_HRO_TYPE-C-31-M-12,0,0 -1.571,"kicad-jlcpcb-tools truth.csv: C165948 at 0 -> 0, origin dy -1.571 mm (resolver on EasyEDA footprint)"
 K1,Relay_DPDT_Omron_G6K-2F-Y,270,0 0,"matthewlai/JLCKicadTools cpl_rotations_db.csv 270; confirmed for K1 (C2982926) in JLC's placement preview, 2026-11-27"
+K2,Relay_DPDT_Omron_G6K-2F-Y,270,0 0,"matthewlai/JLCKicadTools cpl_rotations_db.csv 270; confirmed for K1 (C2982926) in JLC's placement preview, 2026-11-27"
 L1,L_Sunlord_SWPA4030S,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
 Q1,SOT-23,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
 R1,R_0603_1608Metric,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"
@@ -79,7 +80,7 @@ U3,SOIC-8_3.9x4.9mm_P1.27mm,270,0 0,matthewlai/JLCKicadTools cpl_rotations_db.cs
 U4,SOIC-8_3.9x4.9mm_P1.27mm,270,0 0,matthewlai/JLCKicadTools cpl_rotations_db.csv '^SOIC-' 270; kicad-jlcpcb-tools jlcfootprint README: SOIC-8 -BL needs 270 (JLC preview)
 U5,SOT-23-5,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23-5 LMV321 at 0 -> 180 (JLC preview)
 U6,SOT-23-5,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23-5 LMV321 at 0 -> 180 (JLC preview)
-U7,SOT-23-6,180,0 0,"kicad-jlcpcb-tools jlcfootprint README / truth.csv: SOT-23 family 180 (JLC preview); confirmed for U7 (C87080) in JLC's placement preview, 2026-11-27; C7519 differs (PART_CORRECTIONS)"
+U7,SOT-23-6,180,0 0,"kicad-jlcpcb-tools jlcfootprint README / truth.csv: SOT-23 family 180 (JLC preview); confirmed for the LMR16006X (C87080) in JLC's placement preview, 2026-11-27; U7 is now the Y (C290195), same TI DDC package: verify; C7519 differs (PART_CORRECTIONS)"
 U8,SOT-23-3,180,0 0,kicad-jlcpcb-tools truth.csv: SOT-23 at 0 -> 180 (JLC preview)
 U9,SOT-23-6,270,0 0,"USBLC6-2SC6: JLC's library footprint is turned 90 degrees from the LMR16006's on the same SOT-23-6; at 180 JLC's preview showed its leads across our pad columns, pin 1 top-right (2026-11-27). 270 puts its pin 1 on our pad 1"
 Y1,Crystal_SMD_5032-2Pin_5.0x3.2mm,0,0 0,"two-terminal or symmetric part, no correction; check polarity marks in the preview"

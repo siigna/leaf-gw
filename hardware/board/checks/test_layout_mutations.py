@@ -209,6 +209,87 @@ class Mutations(unittest.TestCase):
             bd.fps["R19"].SetPosition(pt(x - 5.5, L.B.H - 0.8))
         self.bites(L.check_keepouts, m, "R19 is in the USB plug zone")
 
+    # vias and SMD pads
+    def test_via_on_smd_pad(self):
+        def m(bd):
+            v = next(v for v in bd.vias("GND") if v.IsLocked())   # a fanout via
+            v.SetPosition(bd.pad("C26", "2").GetPosition())
+        self.bites(L.check_via_pads, m, "touches SMD pad C26.2")
+
+    def test_via_ring_touching_pad(self):
+        def m(bd):
+            p = bd.pad("C26", "2")   # 0603 pad, 0.9 mm wide: a ring 0.2 mm into its edge
+            x, y = L.xy(p.GetPosition())
+            v = next(v for v in bd.vias("GND") if v.IsLocked())
+            v.SetPosition(pt(x + 0.45 + 0.3 - 0.2, y))
+        self.bites(L.check_via_pads, m, "touches SMD pad C26.2")
+
+    # polarity marks
+    def test_cathode_mark_removed(self):
+        def m(bd):
+            x, y = L.xy(bd.pad("D6", "1").GetPosition())
+            items = [g for g in bd.fps["D6"].GraphicalItems() if g.GetLayer() == K.F_SilkS]
+            items += [d for d in bd.pcb.GetDrawings() if d.GetLayer() == K.F_SilkS
+                      and L.item_shape(d, K.F_SilkS).distance(L.Point(x, y)) < 3.0]
+            for g in items:
+                g.Move(K.VECTOR2I(mm(200), 0))
+        self.bites(L.check_polarity_marks, m, "D6: no cathode mark")
+
+    # supply layer changes
+    def test_power_via_alone(self):
+        def m(bd):
+            vs = bd.vias("IGN")
+            a = vs[0]
+            for v in vs[1:]:   # its twin(s): off the board
+                if L.math.dist(L.xy(a.GetPosition()), L.xy(v.GetPosition())) <= L.TWIN_REACH:
+                    v.Move(K.VECTOR2I(mm(200), 0))
+        self.bites(L.check_power_vias, m, "IGN: lone via")
+
+    def test_switch_node_via(self):
+        def m(bd):
+            v = K.PCB_VIA(bd.pcb)
+            KEEP.append(v)
+            v.thisown = False
+            v.SetPosition(bd.pad("L1", "1").GetPosition())
+            v.SetWidth(mm(0.6))
+            v.SetDrill(mm(0.3))
+            v.SetNet(bd.pcb.FindNet("BUCK_SW"))
+            bd.pcb.Add(v)
+        self.bites(L.check_power_vias, m, "BUCK_SW: via")
+
+    def test_track_under_switch_node(self):
+        def m(bd):
+            x, y = L.xy(bd.pad("L1", "1").GetPosition())
+            add_track(bd, "IGN_SENSE", pt(x - 3, y), pt(x + 3, y), 0.2, K.B_Cu)
+        self.bites(L.check_switch_node_clear, m, "IGN_SENSE track on B.Cu")
+
+    # GND stitching
+    def test_gnd_island_one_via(self):
+        def m(bd):
+            st = [L.Point(L.xy(v.GetPosition())) for v in bd.vias("GND")]
+            fill = bd.zone_fill("GND", K.F_Cu)
+            isl = next(i for i in fill.geoms if sum(1 for p in st if i.distance(p) < 0.05) == 2
+                       and not any(i.distance(L.Point(L.xy(p.GetPosition()))) < 0.05 for fp in bd.fps.values()
+                                   for p in fp.Pads() if p.GetNetname() == "GND" and p.GetAttribute() == K.PAD_ATTRIB_PTH))
+            v = next(v for v in bd.vias("GND") if isl.distance(L.Point(L.xy(v.GetPosition()))) < 0.05)
+            v.Move(K.VECTOR2I(mm(200), 0))
+        self.bites(L.check_gnd_stitching, m, "reaches In1 through 1 via")
+
+    def test_edge_stitching_gap(self):
+        def m(bd):
+            for v in bd.vias("GND"):   # every GND via within reach of the top edge, middle third
+                x, y = L.xy(v.GetPosition())
+                if y < 2.5 and 25 < x < 50:
+                    v.Move(K.VECTOR2I(mm(200), 0))
+        self.bites(L.check_gnd_stitching, m, "board edge")
+
+    # 12 V off the MCU
+    def test_12v_by_the_mcu(self):
+        def m(bd):
+            x, y = L.xy(bd.fps["U1"].GetPosition())
+            add_track(bd, "VIN_PROT", pt(x - 8, y - 7), pt(x + 8, y - 7), 0.5)
+        self.bites(L.check_12v_off_mcu, m, "VIN_PROT track")
+
     # safety net on copper
     def test_short_across_relay(self):
         def m(bd):
@@ -221,6 +302,13 @@ class Mutations(unittest.TestCase):
                 if t.HitTest(bd.pad("K1", "21").GetPosition()):
                     t.Move(K.VECTOR2I(mm(200), 0))   # off the board: cut
         self.bites(L.check_copper_safety, m, "CAN1_ADAS_L is not connected")
+
+    def test_k2_com_cut(self):
+        def m(bd):
+            for t in bd.tracks("CAN1_CAR_L"):
+                if t.HitTest(bd.pad("K2", "21").GetPosition()):
+                    t.Move(K.VECTOR2I(mm(200), 0))
+        self.bites(L.check_copper_safety, m, "relay COM K2.21 does not reach")
 
     def test_box_pin_9_copper(self):
         def m(bd):

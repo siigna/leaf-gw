@@ -117,6 +117,12 @@ class Grid:
         for t in b.GetTracks():
             if t.GetClass() == "PCB_VIA":
                 holes.append(Point(_xy(t.GetPosition())).buffer(B.JLC["via_drill"] + B.JLC["hole_to_hole"]))
+        for fp in b.GetFootprints():   # no via in or touching an SMD pad, its own net's included
+            for p in fp.Pads():
+                if p.GetAttribute() == K.PAD_ATTRIB_SMD:
+                    for lay in LAYERS:
+                        if p.IsOnLayer(lay):
+                            holes.append(_poly(p, lay).buffer(vr + B.VIA_PAD_WEB))
         keep = unary_union(pair_lines).buffer(B.CAN_W / 2 + B.REF_MARGIN + 0.25 + vr + 0.01) if pair_lines else shapely.Polygon()
         import routes
         keep_rects = [box(x0, y0, x1, y1).buffer(vr) for x0, y0, x1, y1 in routes.VIA_KEEPOUT]

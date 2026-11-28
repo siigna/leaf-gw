@@ -209,6 +209,19 @@ runs from the IGN-derived 5 V, so a board on USB alone stays in passthrough.
 - 12 V input traces at least 0.5 mm; relay and power pins with thermal relief.
 - K2 (the car-side termination relay) and the four power test pads (TP7–TP10,
   by the buck) came with the pre-order review; F1 went from 1206 to 1812.
+- The buck is one tight group placed in board mm: catch diode at the SW pin,
+  input caps (the 100 nF first) at VIN with their GND under the diode's
+  anode, the inductor beside the diode, the feedback divider at the FB pin
+  sensing at an output cap. Nothing but GND on B.Cu under the switch node and
+  the inductor.
+- The ignition divider's top resistor sits at the 12 V source; no VIN_PROT or
+  IGN_FUSED copper within 3 mm of the MCU.
+- Each transceiver's VIO cap, U5/U6's supply cap and VCAP's cap within about
+  2 mm of their pin.
+- No via in or touching an SMD pad. Every via on a 12 V or 5 V net has a
+  twin within 1.5 mm. GND stitching along the board edge about every 5 mm,
+  and every outer GND pour island reaches the GND plane through two vias or
+  more. Every diode and LED keeps a cathode mark on the silkscreen.
 - Pass-throughs scripted, not autorouted: every non-CAN pass-through runs on
   B.Cu in pin order, so none crosses another; the 12 V pins reach J2 on a short
   In2 hop between J2's holes (its other pads have no inner rings), and IGN
@@ -281,7 +294,9 @@ all pass before any order:
      and its ESD array.
 4. **Layout checks** (script, PCB-based): differential pairs routed as pairs
    with length mismatch under 1 mm, no CAN or USB pair crossing a plane split,
-   12 V track widths, every part on the top side for single-sided assembly.
+   12 V track widths, every part on the top side for single-sided assembly,
+   no via in a pad, twin vias on supply layer changes, GND stitching, cathode
+   marks, 12 V kept off the MCU, nothing under the buck's switch node.
 5. **Fab outputs:** gerbers, drill, JLCPCB BOM and pick-and-place generated from
    the PCB, every BOM line with an LCSC number.
 6. **Renders** of both sides, so a person (or I) can at least look at it.
@@ -293,7 +308,7 @@ all pass before any order:
    safety-net checks in CI. Revised after the pre-order review (2026-11-27):
    TVS, PTC, buck frequency and feedback, LDO, ignition divider, NRST cap,
    relay-switched CAN1 terminations with a second relay, power test pads. The
-   layout (phase 3) has to follow the new netlist before an order.
+   layout (phase 3) follows it.
 3. Layout: placement by script, routing with freerouting, DRC, parity and layout
    checks in CI.
 4. Fab outputs, a first order of about 5 assembled boards.

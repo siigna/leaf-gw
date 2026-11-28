@@ -44,9 +44,9 @@ def offset_pair(centre, d):
 TUNE = {
     "CAN2_L_in": (1, 0.8),      # J1 -> transceiver 3
     "CAN2_L_out": (1, 0.55),    # transceiver 3 -> J2
-    "ADAS_H_in": (1, 1.43),     # J1 -> transceiver 1
+    "ADAS_H_in": (2, 1.07),     # J1 -> transceiver 1
     "ADAS_L_out": (2, 0.44),    # transceiver 1 -> relay COM
-    "CAR_H_in": (1, 2.0),       # relay -> transceiver 2
+    "CAR_H_in": (1, 1.17),      # relay -> transceiver 2
     "CAR_H_out": (1, 1.84),     # transceiver 2 -> J2
     "USB_DM": (1, 0.55),        # protector -> MCU
 }
@@ -70,7 +70,7 @@ def bumps(a, c, tune, side):
 
 
 def lines(pad):
-    return _spread(_lines, pad)
+    return _spread(_lines, pad) + car_side(pad)
 
 
 def _spread(f, pad):
@@ -130,7 +130,7 @@ def _lines(pad):
     spur("CAN2_H", xs, yb, pad("U4", "7")[1], ("D23", "1"), ("U4", "7"))
 
     # --- CAN1 ADAS side (J1 pins 9 H, 11 L; both odd row): to transceiver 1 and relay COM
-    yt, yb = 10.45, 16.75
+    yt, yb = 9.75, 16.75       # L high enough for the VIO cap C14 between it and pin 5
     xs = channel_x("D21", "U2")
     xd = 23.4                  # where the L line drops to COM_B
     k_com_b, k_com_a = pad("K1", "21"), pad("K1", "11")
@@ -140,28 +140,21 @@ def _lines(pad):
     y_gap_b = (k_com_b[1] + k_nc_b[1]) / 2               # between COM_B and NC_B
     y_gap_a = (k_com_a[1] + k_nc_a[1]) / 2               # between COM_A and NC_A
     L("CAN1_ADAS_L", w, ("J1", "11"), (3.6, 15.5), (5.6, 15.5), (7.9, 13.2), (7.9, yt + 0.9), (8.8, yt),
-      *bumps((16.1, yt), (18.9, yt), TUNE["ADAS_L_out"], +1), (xd, yt), (xd, k_com_b[1]), ("K1", "21"))
+      *bumps((16.1, yt), (18.9, yt), TUNE["ADAS_L_out"], -1), (xd, yt), (xd, k_com_b[1]), ("K1", "21"))
     spur("CAN1_ADAS_L", xs, yt, pad("U2", "6")[1], ("D21", "2"), ("U2", "6"))
     L("CAN1_ADAS_H", w, ("J1", "9"), (3.6, 17.5), (5.6, 17.5), (6.35, yb),
       *bumps((6.6, yb), (9.4, yb), TUNE["ADAS_H_in"], +1), (xd - 0.2, yb),
       (xd + 0.05, y_gap_b), (xl_in, y_gap_b), (xl_out, k_com_a[1]), ("K1", "11"))
     spur("CAN1_ADAS_H", xs, yb, pad("U2", "7")[1], ("D21", "1"), ("U2", "7"))
 
-    # --- CAN1 car side (J1/J2 pins 8 H even, 7 L odd): through the relay, around cluster 2
+    # --- CAN1 car side (J1/J2 pins 8 H even, 7 L odd): to the relay's NC contacts; the
+    # rest, right of the relay, is in board mm (car_side)
     yc = 19.7                  # coupled centreline from J1 to the relay
-    yt, yb = 13.85, 20.15      # over / under transceiver 2
-    xs = channel_x("D22", "U3")
-    xv = 33.4                  # where the lines turn up / down after the relay
     y_ab = (pad("K1", "22")[1] + pad("K1", "A2")[1]) / 2    # between NC_B and A2
     L("CAN1_CAR_L", w, ("J1", "7"), (3.6 - (yc - c - 19.5), yc - c), (22.2, yc - c), (22.2 + (yc - c - k_nc_b[1]), k_nc_b[1]),
-      ("K1", "22"), (xl_in, k_nc_b[1]), (xl_out, y_gap_a), (xv, y_gap_a), (xv, yt), (48.3, yt), (48.3, 20.5), ("J2", "7"))
-    spur("CAN1_CAR_L", xs, yt, pad("U3", "6")[1], ("D22", "2"), ("U3", "6"))
+      ("K1", "22"), (xl_in, k_nc_b[1]), (xl_out, y_gap_a))
     L("CAN1_CAR_H", w, ("J1", "8"), (4.6 + (20.5 - yc - c), yc + c), (xl_in - 1.8, yc + c), (xl_in, y_ab),
-      (xl_out, k_nc_a[1]), ("K1", "12"), (xv - 0.5, k_nc_a[1]), (xv, k_nc_a[1] + 0.5), (xv, yb),
-      *bumps((xv, yb), (34.5, yb), TUNE["CAR_H_in"], +1), *bumps((43.3, yb), (46.9, yb), TUNE["CAR_H_out"], +1),
-      (47.0, yb),
-      (47.0 + (21.5 - yb), 21.5), (53.4, 21.5), ("J2", "8"))
-    spur("CAN1_CAR_H", xs, yb, pad("U3", "7")[1], ("D22", "1"), ("U3", "7"))
+      (xl_out, k_nc_a[1]), ("K1", "12"))
 
     # --- CAN0 (J1/J2 pins 4 H, 6 L; pass-through only)
     y0 = 23.8
@@ -193,6 +186,47 @@ def _lines(pad):
     # cap set right under / beside them (whose via reaches the +3V3 plane)
     for pin, cap in (("19", "C4"), ("32", "C5"), ("13", "C3")):
         L("+3V3", 0.3, ("U1", pin), (cap, "1"))
+    return out
+
+
+def car_side(pad):
+    """CAN1 car side right of the relay, in board mm (placement.CAR): from K1's
+    NC contacts the pair runs coupled into the channel between K2's pad rows;
+    the L line leaves up through K2's COM_B (21) and the H line down through
+    COM_A (11), so the relay contacts sit on the lines with no stub. L then runs
+    over the termination and transceiver 2, H under them, each with its spur
+    into the ESD / transceiver channel, and both enter J2 like the other pairs."""
+    w, c = B.CAN_W, D_CAN
+    out = []
+
+    def L(net, *pts):
+        out.append((net, w, [pad(*p) if isinstance(p[0], str) else p for p in pts]))
+
+    def spur(net, x, y_from, y_to, *pads):
+        L(net, (x, y_from), (x, y_to))
+        for p in pads:
+            px, py = pad(*p)
+            L(net, (x, py), (px, py))
+
+    com_a, nc_a = pad("K1", "11"), pad("K1", "12")
+    x0, y_gap = nc_a[0] - 0.9, (com_a[1] + nc_a[1]) / 2       # where the L line leaves K1
+    k21, k11 = pad("K2", "21"), pad("K2", "11")
+    yk = (k21[1] + k11[1]) / 2                                 # K2 channel centre line
+    yt = k21[1] - 0.9 - 0.15 - w / 2 - 0.06                    # over K2's top pad row
+    yb = k11[1] + 0.9 + 0.15 + w / 2 + 0.06                    # under its bottom row
+    xj = nc_a[0] + 0.9 + 0.4                                   # clear of K1's pads
+    xs = (pad("D22", "1")[0] + 1.475 / 2 + pad("U3", "6")[0] - 1.95 / 2) / 2
+    j7, j8 = pad("J2", "7"), pad("J2", "8")
+    xr = 64.1                                                  # L riser to J2, right of transceiver 2's escapes
+    y8 = j7[1] + 1.0                                           # H into J2 between pins 7 and 5
+    L("CAN1_CAR_L", (x0, y_gap), (xj, y_gap), (xj + (yk - c - y_gap), yk - c), (k21[0], yk - c), k21, (k21[0], yt),
+      (xr, yt), (xr, j7[1] - 0.6), (xr + 0.6, j7[1]), ("J2", "7"))
+    spur("CAN1_CAR_L", xs, yt, pad("U3", "6")[1], ("D22", "2"), ("U3", "6"))
+    hin, hout = TUNE["CAR_H_in"], TUNE["CAR_H_out"]
+    L("CAN1_CAR_H", ("K1", "12"), (xj, nc_a[1]), (xj + (nc_a[1] - yk - c), yk + c), (k11[0], yk + c), k11, (k11[0], yb),
+      *bumps((48.3, yb), (53.2, yb), hin, -1), *bumps((61.3, yb), (65.5, yb), hout, -1),
+      (66.0, yb), (66.0, y8 + 0.6), (66.6, y8), (j8[0] - 1.0, y8), ("J2", "8"))
+    spur("CAN1_CAR_H", xs, yb, pad("U3", "7")[1], ("D22", "1"), ("U3", "7"))
     return out
 
 
@@ -270,7 +304,6 @@ SWDIO_VIA = (28.75, 26.6)    # SWDIO (PA13) sits right above USB D+ at the MCU: 
 # board is still open.
 PREROUTE = [
     # (the header pass-throughs are scripted: passthrough() below)
-    ("VIN_PROT", ("C26", "1"), ("R17", "1")),
     # the transceivers' STB lines from the MCU's left side, the longest runs
     # (after the MCU's top row they found no way through)
     ("CAN2_STB", ("U1", "2"), ("U3", "8")),
@@ -284,6 +317,9 @@ PREROUTE = [
     ("CAN2_RX", ("U1", "57"), ("U3", "4")),
     ("CAN3_TX", ("U1", "50"), ("U4", "1")),
     ("CAN3_RX", ("U1", "41"), ("U4", "4")),
+    # SWCLK, from the MCU's top row across to the SWD pads in the corner: one fresh
+    # build left it unrouted on all six freerouting attempts
+    ("SWCLK", ("U1", "49"), ("TP2", "1")),
 ]
 
 
@@ -315,15 +351,17 @@ UNCOUPLED = {
              (48.9, 0, B.W0, 13.0, "J2 pin field")],
     "CAN1_ADAS": [(0, 9.0, 33.0, 21.0, "J1 pin field, split around ESD/transceiver 1, relay COM contacts")],
     "CAN1_CAR": [(0, 18.0, 6.5, 22.0, "J1 pin field"),
-                 (15.4, 16.9, 22.1, 22.0, "length-matching bumps on the L line"),
-                 (22.1, 12.0, 48.9, 23.0, "relay NC contacts, split around ESD/transceiver 2"),
-                 (48.9, 12.0, B.W0, 22.0, "J2 pin field")],
+                 (15.4, 16.9, 22.1, 22.0, "length-matching bumps on the L line")],
     "USB": [(39.0, 27.0, 44.0, 35.0, "receptacle pad pitch"),
             (31.6, 24.0, 40.5, 28.5, "spread through the USBLC6 flow-through pins"),
             (26.8, 27.5, 28.9, 30.5, "MCU pin pitch (0.5 mm)")],
 }
 UNCOUPLED = {k: [(*B.spread(x0, y0), *B.spread(x1, y1), why) for x0, y0, x1, y1, why in v]
              for k, v in UNCOUPLED.items()}
+# the car side right of the relay is drawn in board mm (car_side); only its run
+# into K2's channel is coupled
+UNCOUPLED["CAN1_CAR"] += [(23.0, 15.0, 34.45, 26.3, "relay NC contacts"),
+                          (40.6, 15.0, B.W, 26.3, "K2 COM, split around ESD/transceiver 2, J2 pin field")]
 
 # No vias in the strip between J2's edge-side pin row and the board edge: their
 # In2 antipads pinch the +3V3 plane there under board.IN2_NECK_MIN (check_in2).
@@ -364,25 +402,39 @@ def passthrough(pad):
     s, v, g = PT_SIG_W, B.V12_W, PT_IGN_W
     T = [
         # top group, B.Cu lanes at y 8.4 / 8.95 / 9.4 (outermost first)
-        ("IGN", g, "B", [j1(14), (5.8, 17.5), (5.8, 8.4), (f1[0], 8.4)]),
-        ("IGN", g, "F", [(f1[0], 8.4), f1]),
-        ("IGN", g, "F", [(f1[0], 8.4), (71.7, 8.4), (71.7, 17.5), j2(14)]),
+        ("IGN", g, "B", [j1(14), (5.8, 17.5), (5.8, 8.4), (IGN_UP[0], 8.4)]),
+        ("IGN", g, "F", [(IGN_UP[-1], 8.4), (71.7, 8.4), (71.7, 17.5), j2(14)]),
         ("IGN", g, "F", [(71.7, 17.5), (71.7, 29.5), j2(2)]),
+        ("IGN", g, "F", [(F1_TAP[0], 8.4), (f1[0], 8.4)]),    # the fuse's tap
         ("BUS2_LOOP_15", s, "F", [j1(15), (3.6, 16.5), (6.6, 16.5)]),
         ("BUS2_LOOP_15", s, "B", [(6.6, 16.5), (6.6, 8.95), (66.6, 8.95), (66.6, 15.5), j2(15)]),
         ("BUS2_LOOP_13", s, "B", [j1(13), (3.6, 18.5), (7.2, 18.5), (7.2, 9.4), (66.1, 9.4), (66.1, 17.5), j2(13)]),
         # bottom group, B.Cu lanes at y 31.35 / 32.0 / 32.6 / 33.05 / 33.7 (outermost last)
         ("VIN12_12", v, "B", [j1(12), (9.7, 19.5), (9.7, 31.35), (65.4, 31.35), (65.4, 18.5), (67.2, 18.5)]),
-        ("VIN12_12", v, "In2", [(67.2, 18.5), (69.4, 18.5), j2(12)]),
+        ("VIN12_12", v, "In2", [(66.35, 18.5), (67.2, 18.5), (69.4, 18.5), j2(12)]),
         ("VIN12_10", v, "B", [j1(10), (9.0, 21.5), (9.0, 32.0), (66.1, 32.0), (66.1, 20.5), (67.2, 20.5)]),
-        ("VIN12_10", v, "In2", [(67.2, 20.5), (69.4, 20.5), j2(10)]),
+        ("VIN12_10", v, "In2", [(66.35, 20.5), (67.2, 20.5), (69.4, 20.5), j2(10)]),
         ("BUS0_LOOP_5", s, "B", [j1(5), (3.6, 26.5), (6.25, 26.5), (6.25, 32.6), (66.75, 32.6), (66.75, 25.5), j2(5)]),
         ("BUS0_LOOP_3", s, "B", [j1(3), (3.6, 28.5), (5.8, 28.5), (5.8, 33.05), (67.2, 33.05), (67.2, 27.5), j2(3)]),
         ("IGN", g, "B", [j1(2), (j1(2)[0], 33.7), (j2(2)[0], 33.7), j2(2)]),
+        # K2's coil low side is boxed in by K1's pads, the car pair and the NO_A link:
+        # it drops to B.Cu on two vias right beside its pad (placement.CAR)
+        ("RELAY_COIL_LO", B.POWER_W, "F", [pad("K2", "A2"), K2_COIL_VIAS[0], K2_COIL_VIAS[1]]),
+        ("RELAY_COIL_LO", B.POWER_W, "B", [K2_COIL_VIAS[0], K2_COIL_VIAS[1]]),
     ]
-    V = [("IGN", (f1[0], 8.4)), ("BUS2_LOOP_15", (6.6, 16.5)),
-         ("VIN12_12", (67.2, 18.5)), ("VIN12_10", (67.2, 20.5))]
+    V = [("IGN", (x, 8.4)) for x in IGN_UP + F1_TAP] + [("BUS2_LOOP_15", (6.6, 16.5)),
+         ("VIN12_12", (67.2, 18.5)), ("VIN12_10", (67.2, 20.5)),
+         ("VIN12_12", (66.35, 18.5)), ("VIN12_10", (66.35, 20.5))]    # two vias on each hop
+    V += [("RELAY_COIL_LO", q) for q in K2_COIL_VIAS]
     return T, V
+
+
+# IGN's layer changes carry the comma's supply (J1.14 -> J2.14), so each is
+# several vias in a row, 0.85 mm apart (hole to hole 0.55 mm): up to the F.Cu
+# edge lane, and the fuse's own tap off the B.Cu lane right of F1.
+IGN_UP = (71.7, 70.85, 70.0)
+K2_COIL_VIAS = ((34.3, 17.5), (34.3, 18.4))
+F1_TAP = (63.25, 62.4)
 
 
 # J2 pads that lose their inner-layer rings, so the In2 hops pass between holes
@@ -395,17 +447,55 @@ PT_IN2_CLEAR = ("J2", [str(n) for n in range(1, 19) if n not in (10, 12)])
 # resistor, and each split termination's midpoint resistor to its cap.
 LOCAL_LINKS = [
     ("U2", "3", "C13", "1"), ("U3", "3", "C16", "1"), ("U4", "3", "C19", "1"),
-    ("JP1", "2", "R5", "1"), ("JP2", "2", "R6", "2"), ("R6", "1", "C15", "1"),
-    ("JP3", "2", "R7", "1"), ("R7", "2", "C18", "1"), ("JP4", "2", "R8", "2"),
+    ("U2", "5", "C14", "1"), ("U3", "5", "C17", "1"), ("U4", "5", "C20", "1"),     # VIO caps
+    ("U5", "5", "C22", "1"), ("U6", "5", "C23", "1"),
+    # ADAS-side termination along K1's top, car side beside K2
+    ("JP2", "2", "R6", "2"), ("R6", "1", "C15", "1"), ("C15", "1", "R5", "2"), ("R5", "1", "JP1", "2"),
+    ("K2", "24", "JP4", "1"), ("K2", "14", "JP3", "1"), ("JP4", "2", "R8", "2"), ("R8", "1", "R7", "2"),
+    ("C18", "1", "R7", "2"), ("R7", "1", "JP3", "2"),
     ("JP6", "2", "R10", "2"),
+    ("K1", "A1", "K2", "A1"),    # the coils in parallel: +5V_IGN
+]
+
+
+# Short F.Cu paths in board mm, (net, width, [points]); a point may be a pad.
+# K1's NO contacts to the ADAS-side jumpers above the relay, and the buck's
+# own copper (placement.POWER): the SW node, the hot loop's VIN and GND, the
+# bootstrap and feedback nodes, the output and the input protection.
+POWER_LINKS = [
+    ("K1_NO_B", 0.25, [("JP2", "1"), (25.25, 16.9), ("K1", "24")]),
+    ("K1_NO_A", 0.25, [("JP1", "1"), (37.785, 15.95), (33.4, 15.95), (32.7, 16.65), ("K1", "14")]),
+    ("BUCK_SW", 0.8, [("U7", "6"), ("D8", "1")]),
+    ("BUCK_SW", 0.8, [("L1", "1"), ("C27", "2"), ("D8", "1")]),
+    ("BUCK_CB", 0.3, [("C27", "1"), ("U7", "1")]),
+    ("VIN_PROT", 0.5, [("U7", "5"), (41.3, 6.16), (41.8, 6.6), (44.4, 6.6), ("C25", "1"), ("C24", "1"), ("D7", "1")]),
+    ("VIN_PROT", 0.5, [("C26", "1"), (41.3, 6.16)]),
+    ("VIN_PROT", 0.5, [("R13", "1"), (41.225, 7.2), (41.8, 6.6)]),
+    ("BUCK_SHDN", 0.25, [("U7", "4"), ("R13", "2")]),
+    ("GND", 0.6, [("C26", "2"), ("D8", "2")]),
+    ("GND", 0.6, [("C25", "2"), (45.05, 3.0)]),
+    ("GND", 0.6, [("C24", "2"), ("C25", "2")]),
+    ("BUCK_FB", 0.25, [("R14", "2"), ("R15", "1"), ("U7", "3")]),
+    ("+5V_IGN", 0.6, [("L1", "2"), ("C28", "1"), ("C29", "1")]),
+    ("+5V_IGN", 0.4, [("C29", "1"), ("C30", "1")]),
+    ("+5V_IGN", 0.25, [("C28", "1"), ("R14", "1")]),    # feedback sense, at the output cap
+    # the output leaves the group between C29 and C28 to TP8 and the OR diode
+    ("+5V_IGN", 0.3, [(31.615, 5.21), (31.615, 9.3), ("TP8", "1")]),
+    ("+5V_IGN", 0.4, [("TP8", "1"), (33.0, 9.6), ("D9", "2")]),
+    ("IGN_FUSED", 0.67, [("D7", "2"), ("F1", "2")]),
+    ("IGN_FUSED", 0.67, [("D6", "1"), (56.9, 4.5), ("F1", "2")]),
 ]
 
 
 def local_links(pad, net_of):
-    """[(net, width, "F", [a, b])]; net_of(ref, pad) names the pad's net."""
+    """[(net, width, "F", [points])]; net_of(ref, pad) names the pad's net."""
     out = []
     for u, a, c, k in LOCAL_LINKS:
         net = net_of(u, a)
         assert net == net_of(c, k), f"{u}.{a} and {c}.{k} are on different nets"
         out.append((net, B.POWER_W if net.startswith("+") else 0.25, "F", [pad(u, a), pad(c, k)]))
+    for net, w, pts in POWER_LINKS:
+        for p in pts:
+            assert not isinstance(p[0], str) or net_of(*p) == net, f"{p[0]}.{p[1]} is not on {net}"
+        out.append((net, w, "F", [pad(*p) if isinstance(p[0], str) else p for p in pts]))
     return out

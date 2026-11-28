@@ -27,8 +27,11 @@ W, H, CORNER = 75.0, 50.0, 1.0
 # the header columns, so the headers move in one piece). A part moves with the
 # block its centre is in; routes._spread() asserts no fixed segment is bent.
 W0, H0 = 59.0, 39.5
-X_CUTS = ((9.5, 4.0), (33.6, 7.0), (48.6, 5.0))   # (x0 cut, added mm): J1 field | clusters, MCU | relay .. car side | J2 field
-Y_TOP = (8.0, 3.0)                                # below the top band (CAN2 cluster, power entry)
+# (x0 cut, added mm): J1 field | clusters, MCU | relay .. car side | J2 field. The
+# middle cut is the wide one: the car side right of the relay is placed and routed
+# in board mm (placement.CAR, routes.car_side) in the room it opens.
+X_CUTS = ((9.5, 1.0), (33.6, 10.0), (48.6, 5.0))
+Y_TOP = (8.85, 3.0)                               # below the top band (CAN2 cluster, power entry)
 Y_LOW = (24.3, 28.0, 7.0, 48.9, 7.5)              # below CAN0 between the header columns (x 7..48.9), below the headers outside
 assert abs(W0 + sum(d for _, d in X_CUTS) - W) < 1e-9 and abs(H0 + Y_TOP[1] + Y_LOW[4] - H) < 1e-9
 
@@ -48,7 +51,7 @@ def spread(x, y):
 
 def unspread(x, y):
     """The compact-drawing point that spread() takes to (x, y)."""
-    for dx in sorted({sum(d for c, d in X_CUTS[:k]) for k in range(len(X_CUTS) + 1)}):
+    for dx in sorted({sum(d for _, d in X_CUTS[:k]) for k in range(len(X_CUTS) + 1)}):
         for dy in (0.0, Y_TOP[1], Y_LOW[4], Y_TOP[1] + Y_LOW[4]):
             p = (round(x - dx, 4), round(y - dy, 4))
             if shift(*p) == (dx, dy):
@@ -156,11 +159,20 @@ REF_MARGIN = 1 * H_PREPREG
 # In2 (the +3V3 plane) carries only the VIN12 hops into J2 (routes.passthrough) and, at
 # most, repair hops of this length; its +3V3 fill must keep a neck at least
 # IN2_NECK_MIN wide everywhere it joins (checked by eroding the fill).
-IN2_NETS = ()   # the VIN12 hops into J2 are ~3.6 mm, inside IN2_HOP_MAX
+IN2_NETS = ()   # the VIN12 hops into J2 are ~4.5 mm, inside IN2_HOP_MAX
 IN2_HOP_MAX = 5.0
 IN2_NECK_MIN = 1.0
 V3V3_LOAD = 0.150   # A, SPEC "Power": about 150 mA board total, an upper bound for 3V3
 INNER_CU = 0.0152   # mm, JLC04161H-7628 inner copper
+
+# A via's ring keeps this much copper web from any SMD pad, its own net's
+# included (no via in or touching a pad: solder wicks down an open via, and a
+# ring merged into a pad changes its paste and its shape)
+VIA_PAD_WEB = 0.05
+
+# Nothing but GND runs on B.Cu under the buck's switch node and inductor,
+# within this of their copper and courtyard
+SW_QUIET = 0.3
 
 # Connector mating keepout: no other courtyard within the header body grown by this.
 HEADER_KEEPOUT = 0.5

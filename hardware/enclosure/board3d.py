@@ -41,7 +41,8 @@ TH_TAIL = 2.0        # any other through-hole pin: assume up to 2 mm below the b
 # The USB-C receptacle's own model is missing; the board's renders use a
 # look-alike (layout/colors.py), and so do the hulls.
 STAND_INS = __import__("colors").STAND_INS
-BOXED = {"SW1"}
+F1_H = 2.5           # 1812 PTC (mSMD050-60V); KiCad has no Fuse_1812 model; 1812 PTCs are 0.6-1.8 mm thick
+BOXED = {"SW1", "F1"}
 
 _board = None
 
@@ -161,6 +162,7 @@ def solids():
         if ref not in ("J1", "J2"):
             out.append((f"{ref} tail", box(x - sx / 2, y - sy / 2, x + sx / 2, y + sy / 2, -TH_TAIL, 0)))
     out.append(("SW1", box(*fab_box("SW1"), t, t + SW1_H)))
+    out.append(("F1", box(*fab_box("F1"), t, t + F1_H)))
     return out
 
 
